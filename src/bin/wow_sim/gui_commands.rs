@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use wow_ui_sim::font::WowFontSystem;
+use wow_ui_sim::iced_app::frame_collect::SCALPEL_VISUALIZER_ROOT;
 use wow_ui_sim::lua_api::WowLuaEnv;
 use wow_ui_sim::startup::{apply_delay, run_extra_update_ticks, settle_headless_startup};
 
@@ -67,6 +68,7 @@ pub(super) fn dispatch_screenshot(dispatch: CommandDispatch) {
         filter,
         crop,
         dump_tree,
+        manifest,
     }) = dispatch.command
     else {
         unreachable!("dispatch_screenshot only fires for Commands::Screenshot");
@@ -84,6 +86,7 @@ pub(super) fn dispatch_screenshot(dispatch: CommandDispatch) {
             exec_lua: dispatch.exec_lua.as_deref(),
             exec_lua_secure: dispatch.exec_lua_secure,
             dump_tree,
+            manifest,
         },
     );
 }
@@ -246,6 +249,7 @@ pub(super) struct ScreenshotCommand<'a> {
     pub(super) exec_lua: Option<&'a str>,
     pub(super) exec_lua_secure: bool,
     pub(super) dump_tree: Option<Option<String>>,
+    pub(super) manifest: Option<PathBuf>,
 }
 
 pub(super) fn run_screenshot(
@@ -268,14 +272,84 @@ pub(super) fn run_screenshot(
 
     let img = render_screenshot_image(&batch, &glyph_atlas, command.width, command.height);
     let img = apply_optional_crop(img, command.crop.as_deref());
-    let output = command.output.with_extension("webp");
+    let output = command.output.clone();
     save_screenshot(&img, &output);
+    if let Some(path) = command.manifest.as_deref() {
+        write_manifest(
+            env,
+            path,
+            command.width,
+            command.height,
+            command.filter.as_deref(),
+        );
+    }
     eprintln!(
         "Saved {}x{} screenshot to {}",
         img.width(),
         img.height(),
         output.display()
     );
+}
+
+fn write_manifest(env: &WowLuaEnv, path: &Path, width: u32, height: u32, filter: Option<&str>) {
+    let state = env.state().borrow();
+    let needle = filter.map(str::to_ascii_lowercase);
+    let mut regions = Vec::new();
+    for id in state.widgets.iter_ids() {
+        let Some(frame) = state.widgets.get(id) else {
+            continue;
+        };
+        let Some(name) = frame.name.as_deref() else {
+            continue;
+        };
+        if !name.starts_with("WeakAuras:") && !name.starts_with("ScalpelVisualizer_") {
+            continue;
+        }
+        if !manifest_frame_matches(name, needle.as_deref()) {
+            continue;
+        }
+        let rect =
+            wow_ui_sim::layout::compute_frame_rect(&state.widgets, id, width as f32, height as f32);
+        let parent = frame
+            .parent_id
+            .and_then(|parent_id| state.widgets.get(parent_id))
+            .and_then(|parent| parent.name.clone());
+        let display_id = name
+            .strip_prefix("ScalpelVisualizer_")
+            .or_else(|| name.strip_prefix("WeakAuras:"))
+            .unwrap_or(name);
+        regions.push(serde_json::json!({
+            "display_id": display_id,
+            "encoded_id": name.starts_with("ScalpelVisualizer_"),
+            "region_type": format!("{:?}", frame.widget_type),
+            "effective_visible": state.widgets.is_ancestor_visible(id),
+            "parent": parent.as_ref().map(|value| value.trim_start_matches("WeakAuras:").to_string()),
+            "is_root": parent.is_none(),
+            "x": rect.x,
+            "y": rect.y,
+            "width": rect.width,
+            "height": rect.height,
+            "scale": frame.scale,
+            "alpha": frame.alpha,
+        }));
+    }
+    let payload = serde_json::json!({"regions": regions});
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(error) = std::fs::write(path, serde_json::to_vec_pretty(&payload).unwrap()) {
+        eprintln!("[manifest] failed to write {}: {error}", path.display());
+    }
+}
+
+fn manifest_frame_matches(name: &str, filter: Option<&str>) -> bool {
+    match filter {
+        Some(value) if value == SCALPEL_VISUALIZER_ROOT.to_ascii_lowercase() => {
+            name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_")
+        }
+        Some(value) => name.to_ascii_lowercase().contains(value),
+        None => true,
+    }
 }
 
 fn prepare_screenshot_env(env: &WowLuaEnv, command: &ScreenshotCommand<'_>) {

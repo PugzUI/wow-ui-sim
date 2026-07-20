@@ -49,6 +49,8 @@ pub enum Request {
         filter: Option<String>,
         /// Crop the output image to WxH+X+Y (e.g., 700x150+400+650)
         crop: Option<String>,
+        /// Optional machine-readable native region manifest path.
+        manifest: Option<String>,
     },
     /// Move the in-app mouse cursor and dispatch hover scripts.
     MouseMove {
@@ -105,6 +107,7 @@ pub enum LuaCommand {
         height: u32,
         filter: Option<String>,
         crop: Option<String>,
+        manifest: Option<String>,
         respond: mpsc::Sender<Response>,
     },
     MouseMove {
@@ -322,7 +325,8 @@ fn send_app_command_request(request: Request, cmd_tx: &mpsc::Sender<LuaCommand>)
             height,
             filter,
             crop,
-        } => send_screenshot_command(cmd_tx, output, width, height, filter, crop),
+            manifest,
+        } => send_screenshot_command(cmd_tx, output, width, height, filter, crop, manifest),
         Request::MouseMove { x, y } => send_mouse_move_command(cmd_tx, x, y),
         Request::MouseClick { x, y } => send_mouse_click_command(cmd_tx, x, y),
     }
@@ -367,6 +371,7 @@ fn send_screenshot_command(
     height: u32,
     filter: Option<String>,
     crop: Option<String>,
+    manifest: Option<String>,
 ) -> Response {
     send_command(cmd_tx, |respond| LuaCommand::Screenshot {
         output,
@@ -374,6 +379,7 @@ fn send_screenshot_command(
         height,
         filter,
         crop,
+        manifest,
         respond,
     })
 }
@@ -489,6 +495,7 @@ pub mod client {
                 height,
                 filter,
                 crop,
+                manifest: None,
             },
         )?;
         match response {

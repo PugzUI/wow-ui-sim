@@ -17,6 +17,14 @@ pub const HIT_TEST_EXCLUDED: &[&str] = &[
     "EditModeManagerFrame",
 ];
 
+/// Synthetic screenshot root used by Scalpel's native Aura Visualizer.
+///
+/// Unlike the normal screenshot command, the visualizer needs the union of
+/// all WeakAuras regions and its diagnostic marker frames without including
+/// unrelated Blizzard UI. This sentinel keeps that behavior explicit and
+/// leaves ordinary exact-root filtering unchanged.
+pub const SCALPEL_VISUALIZER_ROOT: &str = "__SCALPEL_VISUALIZER__";
+
 static HIT_TEST_EXCLUDED_NAMES: LazyLock<FxHashSet<&'static str>> =
     LazyLock::new(|| HIT_TEST_EXCLUDED.iter().copied().collect());
 
@@ -34,6 +42,9 @@ pub fn collect_subtree_ids(
     registry: &crate::widget::WidgetRegistry,
     root_name: &str,
 ) -> FxHashSet<u64> {
+    if root_name == SCALPEL_VISUALIZER_ROOT {
+        return collect_visualizer_ids(registry);
+    }
     let mut ids = FxHashSet::default();
     let root_id = find_best_named_root(registry, root_name);
     if let Some(root_id) = root_id {
@@ -46,6 +57,78 @@ pub fn collect_subtree_ids(
         }
     }
     ids
+}
+
+fn collect_visualizer_ids(registry: &crate::widget::WidgetRegistry) -> FxHashSet<u64> {
+    let mut ids = FxHashSet::default();
+    let mut queue = registry
+        .iter_ids()
+        .filter(|&id| {
+            registry.get(id).is_some_and(|frame| {
+                frame.name.as_deref().is_some_and(|name| {
+                    name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_")
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+
+    // Marker frames are positioned over the real WeakAuras region because
+    // the addon API does not expose a stable name for every region frame.
+    // Include frames whose computed layout intersects a marker, then walk
+    // their descendants so icon textures, text, cooldowns, and masks render
+    // through the normal native path.
+    let marker_rects = queue
+        .iter()
+        .filter_map(|&id| frame_rect_for_visualizer(registry, id))
+        .filter(|rect| rect.width > 0.0 && rect.height > 0.0)
+        .collect::<Vec<_>>();
+    if !marker_rects.is_empty() {
+        for id in registry.iter_ids() {
+            let Some(frame) = registry.get(id) else {
+                continue;
+            };
+            // Never pull the full-screen root (or another top-level shell)
+            // into a marker-selected subtree; only the marker and its
+            // overlapping native aura descendants are eligible.
+            if frame.parent_id.is_none() {
+                continue;
+            }
+            let Some(rect) = frame_rect_for_visualizer(registry, id) else {
+                continue;
+            };
+            if marker_rects.iter().any(|marker| {
+                let marker_area = (marker.width * marker.height).max(1.0);
+                let frame_area = rect.width * rect.height;
+                rects_intersect(*marker, rect) && frame_area <= marker_area * 4.0
+            }) {
+                queue.push(id);
+            }
+        }
+    }
+    while let Some(id) = queue.pop() {
+        if !ids.insert(id) {
+            continue;
+        }
+        if let Some(frame) = registry.get(id) {
+            queue.extend(frame.children.iter().copied());
+        }
+    }
+    ids
+}
+
+fn frame_rect_for_visualizer(
+    registry: &crate::widget::WidgetRegistry,
+    id: u64,
+) -> Option<crate::LayoutRect> {
+    // Screenshot layout has already run before subtree collection. Avoid
+    // recursively recomputing every frame here: the full UI tree is large and
+    // doing that per candidate turns a marker capture into an accidental
+    // quadratic pass.
+    registry.get(id)?.layout_rect
+}
+
+fn rects_intersect(a: crate::LayoutRect, b: crate::LayoutRect) -> bool {
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 }
 
 fn find_best_named_root(registry: &crate::widget::WidgetRegistry, root_name: &str) -> Option<u64> {
@@ -259,7 +342,7 @@ fn registration_set_matches(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_subtree_ids, intra_strata_sort_key};
+    use super::{SCALPEL_VISUALIZER_ROOT, collect_subtree_ids, intra_strata_sort_key};
     use crate::widget::{AnchorPoint, Frame, WidgetRegistry, WidgetType};
 
     #[cfg(feature = "gui")]
@@ -287,6 +370,28 @@ mod tests {
         assert!(ids.contains(&new_child));
         assert!(!ids.contains(&old_root));
         assert!(!ids.contains(&old_child));
+    }
+
+    #[test]
+    fn collect_visualizer_ids_includes_named_regions_and_descendants_only() {
+        let mut registry = crate::widget::WidgetRegistry::new();
+        let root = registry.register(Frame::new(
+            WidgetType::Frame,
+            Some("WeakAuras:root".into()),
+            None,
+        ));
+        let child = registry.register(Frame::new(WidgetType::Texture, None, Some(root)));
+        registry.add_child(root, child);
+        let unrelated = registry.register(Frame::new(
+            WidgetType::Frame,
+            Some("BlizzardFrame".into()),
+            None,
+        ));
+
+        let ids = collect_subtree_ids(&registry, SCALPEL_VISUALIZER_ROOT);
+        assert!(ids.contains(&root));
+        assert!(ids.contains(&child));
+        assert!(!ids.contains(&unrelated));
     }
 
     #[test]

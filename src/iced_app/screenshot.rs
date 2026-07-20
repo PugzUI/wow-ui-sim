@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use crate::iced_app::frame_collect::SCALPEL_VISUALIZER_ROOT;
+use crate::lua_api::WowLuaEnv;
 use crate::lua_server::Response as LuaResponse;
 use crate::render::GlyphAtlas;
 use crate::render::headless::render_to_image;
@@ -18,8 +20,9 @@ impl App {
         height: u32,
         filter: Option<&str>,
         crop: Option<&str>,
+        manifest: Option<&str>,
     ) -> LuaResponse {
-        let output_path = Path::new(output).with_extension("webp");
+        let output_path = Path::new(output).to_path_buf();
         let (batch, mut glyph_atlas) = self.build_screenshot_batch(width, height, filter);
         let glyph_data = glyph_atlas_data(&mut glyph_atlas);
         let mut tex_mgr = self.texture_manager.borrow_mut();
@@ -31,6 +34,9 @@ impl App {
 
         if let Err(e) = save_screenshot(&img, &output_path) {
             return LuaResponse::Error(format!("Failed to save screenshot: {}", e));
+        }
+        if let Some(manifest) = manifest {
+            write_visualizer_manifest(&self.env.borrow(), manifest, width, height, filter);
         }
 
         LuaResponse::Output(format_screenshot_saved_message(
@@ -77,6 +83,69 @@ impl App {
             )
         };
         (batch, glyph_atlas)
+    }
+}
+
+pub(crate) fn write_visualizer_manifest(
+    env: &WowLuaEnv,
+    path: &str,
+    width: u32,
+    height: u32,
+    filter: Option<&str>,
+) {
+    let state = env.state().borrow();
+    let visualizer_filter = filter == Some(SCALPEL_VISUALIZER_ROOT);
+    let needle = filter.map(str::to_ascii_lowercase);
+    let mut regions = Vec::new();
+    for id in state.widgets.iter_ids() {
+        let Some(frame) = state.widgets.get(id) else {
+            continue;
+        };
+        let Some(name) = frame.name.as_deref() else {
+            continue;
+        };
+        let selected = if visualizer_filter {
+            name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_")
+        } else {
+            needle
+                .as_deref()
+                .is_none_or(|value| name.to_ascii_lowercase().contains(value))
+        };
+        if !selected {
+            continue;
+        }
+        let rect =
+            crate::layout::compute_frame_rect(&state.widgets, id, width as f32, height as f32);
+        let parent = frame
+            .parent_id
+            .and_then(|parent_id| state.widgets.get(parent_id))
+            .and_then(|parent| parent.name.clone());
+        let display_id = name
+            .strip_prefix("ScalpelVisualizer_")
+            .or_else(|| name.strip_prefix("WeakAuras:"))
+            .unwrap_or(name);
+        regions.push(serde_json::json!({
+            "display_id": display_id,
+            "encoded_id": name.starts_with("ScalpelVisualizer_"),
+            "region_type": format!("{:?}", frame.widget_type),
+            "effective_visible": state.widgets.is_ancestor_visible(id),
+            "parent": parent.as_ref().map(|value| value.trim_start_matches("WeakAuras:").to_string()),
+            "is_root": parent.is_none(),
+            "x": rect.x,
+            "y": rect.y,
+            "width": rect.width,
+            "height": rect.height,
+            "scale": frame.scale,
+            "alpha": frame.alpha,
+        }));
+    }
+    let payload = serde_json::json!({"regions": regions});
+    let output = Path::new(path);
+    if let Some(parent) = output.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(error) = std::fs::write(output, serde_json::to_vec_pretty(&payload).unwrap()) {
+        eprintln!("[manifest] failed to write {}: {error}", output.display());
     }
 }
 
@@ -154,10 +223,15 @@ fn apply_crop(img: image::RgbaImage, crop_str: &str) -> Result<image::RgbaImage,
     Ok(img.view(cx, cy, cw, ch).to_image())
 }
 
-/// Save screenshot image as lossy WebP (quality 65). Extension is forced to .webp.
+/// Save screenshots as WebP for streaming or lossless PNG for capture.
 fn save_screenshot(img: &image::RgbaImage, output: &Path) -> Result<(), String> {
-    let output = output.with_extension("webp");
-    let encoder = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height());
-    let mem = encoder.encode(65.0);
-    std::fs::write(&output, &*mem).map_err(|e| e.to_string())
+    if output.extension().and_then(|value| value.to_str()) == Some("png") {
+        img.save_with_format(output, image::ImageFormat::Png)
+            .map_err(|e| e.to_string())
+    } else {
+        let output = output.with_extension("webp");
+        let encoder = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height());
+        let mem = encoder.encode(65.0);
+        std::fs::write(&output, &*mem).map_err(|e| e.to_string())
+    }
 }

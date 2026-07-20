@@ -103,6 +103,9 @@ enum Commands {
         crop: Option<String>,
         #[arg(long, value_name = "FILTER")]
         dump_tree: Option<Option<String>>,
+        /// Write a machine-readable manifest of materialized WeakAuras frames.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
 
     /// Show unique Lua errors as JSON (suppresses other output)

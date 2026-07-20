@@ -527,13 +527,7 @@ fn build_background_batch(screen_size: (f32, f32)) -> QuadBatch {
     let mut batch = QuadBatch::with_capacity(1000);
     let size = Size::new(screen_size.0, screen_size.1);
 
-    batch.push_tiled_path(
-        Rectangle::new(Point::ORIGIN, size),
-        256.0,
-        256.0,
-        "framegeneral/ui-background-marble",
-        [0.55, 0.55, 0.55, 1.0],
-    );
+    batch.push_solid(Rectangle::new(Point::ORIGIN, size), [0.0, 0.0, 0.0, 1.0]);
 
     batch
 }

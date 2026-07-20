@@ -89,8 +89,9 @@ impl App {
                 height,
                 filter,
                 crop,
+                manifest,
                 respond,
-            } => self.handle_lua_screenshot(output, width, height, filter, crop, respond),
+            } => self.handle_lua_screenshot(output, width, height, filter, crop, manifest, respond),
             LuaCommand::MouseMove { x, y, respond } => self.handle_lua_mouse_move(x, y, respond),
             LuaCommand::MouseClick { x, y, respond } => self.handle_lua_mouse_click(x, y, respond),
         }
@@ -164,10 +165,17 @@ impl App {
         height: u32,
         filter: Option<String>,
         crop: Option<String>,
+        manifest: Option<String>,
         respond: mpsc::Sender<LuaResponse>,
     ) {
-        let result =
-            self.render_screenshot(&output, width, height, filter.as_deref(), crop.as_deref());
+        let result = self.render_screenshot(
+            &output,
+            width,
+            height,
+            filter.as_deref(),
+            crop.as_deref(),
+            manifest.as_deref(),
+        );
         let _ = respond.send(result);
     }
 

@@ -56,7 +56,7 @@ fn rebuild_strata_batches(
         let strata_start = std::time::Instant::now();
         let mut batch = QuadBatch::new();
         if strata_idx == 0 {
-            emit_marble_background(&mut batch, params.size);
+            emit_neutral_background(&mut batch, params.size);
         }
 
         let snapshots = snapshot_cache[strata_idx].get_or_insert_with(HashMap::new);
@@ -136,14 +136,8 @@ struct EmitUncachedFrame<'a> {
     statusbar_fills: &'a HashMap<u64, super::super::statusbar::StatusBarFill>,
 }
 
-fn emit_marble_background(batch: &mut QuadBatch, size: Size) {
-    batch.push_tiled_path(
-        Rectangle::new(Point::ORIGIN, size),
-        256.0,
-        256.0,
-        "framegeneral/ui-background-marble",
-        [0.55, 0.55, 0.55, 1.0],
-    );
+fn emit_neutral_background(batch: &mut QuadBatch, size: Size) {
+    batch.push_solid(Rectangle::new(Point::ORIGIN, size), [0.0, 0.0, 0.0, 1.0]);
 }
 
 struct EmitStats {
@@ -518,12 +512,31 @@ pub fn rebuild_dirty_strata_batches_for_registry(
 
 #[cfg(test)]
 mod tests {
-    use super::{frame_or_ancestor_is_dirty, prune_irrelevant_dirty_strata};
+    use super::{
+        emit_neutral_background, frame_or_ancestor_is_dirty, prune_irrelevant_dirty_strata,
+    };
     use crate::render::{FrameQuadSnapshot, QuadBatch};
     use crate::widget::{Frame, FrameStrata, WidgetRegistry, WidgetType};
+    use iced::Size;
     use rustc_hash::FxHashSet;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    #[test]
+    fn neutral_background_is_opaque_black_without_a_texture_request() {
+        let mut batch = QuadBatch::new();
+
+        emit_neutral_background(&mut batch, Size::new(2560.0, 1440.0));
+
+        assert_eq!(batch.quad_count(), 1);
+        assert!(batch.texture_requests.is_empty());
+        assert!(
+            batch
+                .vertices
+                .iter()
+                .all(|vertex| { vertex.color == [0.0, 0.0, 0.0, 1.0] && vertex.tex_index == -1 })
+        );
+    }
 
     #[test]
     fn cached_descendants_of_dirty_parents_are_not_clean() {

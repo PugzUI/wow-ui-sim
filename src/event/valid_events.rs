@@ -10,13 +10,45 @@
 //! `is_valid_event` = registerable OR non-registerable (for C_EventUtils).
 //! `is_registerable_event` = only registerable (for RegisterEvent).
 
-#[cfg(any(feature = "client-retail", feature = "client-ptr"))]
+#[cfg(all(
+    any(feature = "client-retail", feature = "client-ptr"),
+    not(any(
+        feature = "client-wrath",
+        feature = "client-mists",
+        feature = "client-era",
+        feature = "client-anniversary"
+    ))
+))]
 use super::valid_events_a::EVENTS_A;
-#[cfg(any(feature = "client-retail", feature = "client-ptr"))]
+#[cfg(all(
+    any(feature = "client-retail", feature = "client-ptr"),
+    not(any(
+        feature = "client-wrath",
+        feature = "client-mists",
+        feature = "client-era",
+        feature = "client-anniversary"
+    ))
+))]
 use super::valid_events_a_tail::EVENTS_A_TAIL;
-#[cfg(any(feature = "client-retail", feature = "client-ptr"))]
+#[cfg(all(
+    any(feature = "client-retail", feature = "client-ptr"),
+    not(any(
+        feature = "client-wrath",
+        feature = "client-mists",
+        feature = "client-era",
+        feature = "client-anniversary"
+    ))
+))]
 use super::valid_events_b::EVENTS_B;
-#[cfg(any(feature = "client-retail", feature = "client-ptr"))]
+#[cfg(all(
+    any(feature = "client-retail", feature = "client-ptr"),
+    not(any(
+        feature = "client-wrath",
+        feature = "client-mists",
+        feature = "client-era",
+        feature = "client-anniversary"
+    ))
+))]
 use super::valid_events_c::EVENTS_C;
 
 /// Check if an event can be passed to `RegisterEvent()`.
@@ -36,7 +68,15 @@ pub fn is_registerable_event(name: &str) -> bool {
     crate::wrath::is_registerable_event(name)
 }
 
-#[cfg(any(feature = "client-retail", feature = "client-ptr"))]
+#[cfg(all(
+    any(feature = "client-retail", feature = "client-ptr"),
+    not(any(
+        feature = "client-wrath",
+        feature = "client-mists",
+        feature = "client-era",
+        feature = "client-anniversary"
+    ))
+))]
 pub fn is_registerable_event(name: &str) -> bool {
     #[cfg(feature = "client-ptr")]
     if PATCH_12_1_REMOVED_REGISTERABLE_EVENTS
