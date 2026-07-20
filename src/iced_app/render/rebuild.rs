@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::render::font::WowFontSystem;
 use crate::render::glyph::GlyphAtlas;
-use crate::render::texture::UI_SCALE;
+use crate::render::texture::ui_scale;
 use crate::render::{FrameQuadSnapshot, QuadBatch};
 use crate::widget::{FrameStrata, WidgetType};
 
@@ -79,7 +79,7 @@ impl<'a> RebuildStrataBatches<'a> {
         EmitStrataCached {
             bucket,
             dirty_ids: self.dirty_ids,
-            screen_size: (self.size.width / UI_SCALE, self.size.height / UI_SCALE),
+            screen_size: (self.size.width / ui_scale(), self.size.height / ui_scale()),
             ctx: self.ctx,
         }
     }
@@ -232,8 +232,8 @@ fn scaled_bounds(entry: RenderListEntry) -> (Rectangle, Option<Rectangle>) {
 
 fn scale_layout_rect(rect: crate::LayoutRect) -> Rectangle {
     Rectangle::new(
-        Point::new(rect.x * UI_SCALE, rect.y * UI_SCALE),
-        Size::new(rect.width * UI_SCALE, rect.height * UI_SCALE),
+        Point::new(rect.x * ui_scale(), rect.y * ui_scale()),
+        Size::new(rect.width * ui_scale(), rect.height * ui_scale()),
     )
 }
 

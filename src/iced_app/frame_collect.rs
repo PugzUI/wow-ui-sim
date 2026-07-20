@@ -65,9 +65,10 @@ fn collect_visualizer_ids(registry: &crate::widget::WidgetRegistry) -> FxHashSet
         .iter_ids()
         .filter(|&id| {
             registry.get(id).is_some_and(|frame| {
-                frame.name.as_deref().is_some_and(|name| {
-                    name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_")
-                })
+                registry.is_ancestor_visible(id)
+                    && frame.name.as_deref().is_some_and(|name| {
+                        name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_")
+                    })
             })
         })
         .collect::<Vec<_>>();
@@ -87,6 +88,9 @@ fn collect_visualizer_ids(registry: &crate::widget::WidgetRegistry) -> FxHashSet
             let Some(frame) = registry.get(id) else {
                 continue;
             };
+            if !registry.is_ancestor_visible(id) {
+                continue;
+            }
             // Never pull the full-screen root (or another top-level shell)
             // into a marker-selected subtree; only the marker and its
             // overlapping native aura descendants are eligible.

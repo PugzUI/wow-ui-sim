@@ -59,6 +59,13 @@ pub fn load_blizzard_addons(
     saved_vars: &mut Option<SavedVariablesManager>,
     screen: ScreenKind,
 ) {
+    if std::env::var("WOW_SIM_SKIP_BLIZZARD_UI")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        logging::println_elapsed("Blizzard addon loading disabled");
+        return;
+    }
     let addons_dir = blizzard_ui_addons_dir_or_exit();
     let verbose = std::env::var("WOW_SIM_VERBOSE").is_ok();
     let blizzard_start = std::time::Instant::now();

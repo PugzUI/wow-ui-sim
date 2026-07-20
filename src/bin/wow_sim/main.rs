@@ -313,8 +313,12 @@ fn init_environment(
     init_sound(env);
     {
         let mut state = env.state().borrow_mut();
-        let mut addon_base_paths =
-            vec![runtime_blizzard_ui_addons_path_with_setup().map_err(startup_blizzard_ui_help)?];
+        let mut addon_base_paths = if skip_blizzard_ui() {
+            logging::println_elapsed("Blizzard UI loading disabled");
+            Vec::new()
+        } else {
+            vec![runtime_blizzard_ui_addons_path_with_setup().map_err(startup_blizzard_ui_help)?]
+        };
         addon_base_paths.extend(wow_ui_sim::paths::default_addons_paths());
         if args.is_test_command() {
             addon_base_paths.push(PathBuf::from("./Interface/TestAddOns"));
@@ -323,6 +327,12 @@ fn init_environment(
     }
     wow_ui_sim::xml::register_intrinsic_templates();
     Ok(())
+}
+
+fn skip_blizzard_ui() -> bool {
+    std::env::var("WOW_SIM_SKIP_BLIZZARD_UI")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 fn runtime_blizzard_ui_addons_path_with_setup() -> wow_ui_sim::Result<PathBuf> {

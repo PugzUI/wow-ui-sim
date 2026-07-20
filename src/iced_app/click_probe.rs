@@ -11,7 +11,7 @@ use super::state::CanvasMessage;
 use super::strata_emit::build_hittable_rects;
 use super::{App, DebugOptions, Message};
 use crate::lua_api::WowLuaEnv;
-use crate::render::texture::UI_SCALE;
+use crate::render::texture::ui_scale;
 use crate::saved_variables::SavedVariablesManager;
 
 #[derive(Debug, Clone, Copy)]
@@ -126,8 +126,8 @@ fn named_frame_center(app: &App, frame_name: &str) -> Result<iced::Point, String
         .layout_rect
         .ok_or_else(|| format!("frame has no layout rect: {frame_name}"))?;
     Ok(iced::Point::new(
-        (rect.x + rect.width / 2.0) * UI_SCALE,
-        (rect.y + rect.height / 2.0) * UI_SCALE,
+        (rect.x + rect.width / 2.0) * ui_scale(),
+        (rect.y + rect.height / 2.0) * ui_scale(),
     ))
 }
 

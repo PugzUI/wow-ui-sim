@@ -313,7 +313,7 @@ fn objective_tracker_quest_module_header_emits_glyph_quads() {
 
         assert!(exists, "QuestObjectiveTracker.Header.Text must exist");
 
-        let ui_scale = wow_ui_sim::render::texture::UI_SCALE;
+        let ui_scale = wow_ui_sim::render::texture::ui_scale();
         let min_x = left.min(right) as f32 * ui_scale - 2.0;
         let max_x = left.max(right) as f32 * ui_scale + 2.0;
         // GetTop/GetBottom are in WoW coordinates (origin bottom-left), while

@@ -6,7 +6,7 @@ use rustc_hash::FxHashSet;
 use crate::render::QuadBatch;
 use crate::render::font::WowFontSystem;
 use crate::render::glyph::GlyphAtlas;
-use crate::render::texture::UI_SCALE;
+use crate::render::texture::ui_scale;
 use crate::widget::WidgetRegistry;
 use crate::widget::WidgetType;
 
@@ -220,7 +220,7 @@ fn resolve_line_endpoint_position(
     let target_id = anchor.target_id?;
     let rect = registry.get(target_id)?.layout_rect?;
     let (ax, ay) = anchor_position(anchor.point, rect.x, rect.y, rect.width, rect.height);
-    let ui_scale = crate::render::texture::UI_SCALE;
+    let ui_scale = crate::render::texture::ui_scale();
     Some((
         (ax + anchor.x_offset) * ui_scale,
         (ay - anchor.y_offset) * ui_scale,
@@ -362,8 +362,8 @@ fn intersect_rects(a: crate::LayoutRect, b: crate::LayoutRect) -> Option<crate::
 
 fn layout_rect_to_screen_rect(rect: crate::LayoutRect) -> Rectangle {
     Rectangle::new(
-        Point::new(rect.x * UI_SCALE, rect.y * UI_SCALE),
-        Size::new(rect.width * UI_SCALE, rect.height * UI_SCALE),
+        Point::new(rect.x * ui_scale(), rect.y * ui_scale()),
+        Size::new(rect.width * ui_scale(), rect.height * ui_scale()),
     )
 }
 
@@ -480,10 +480,10 @@ pub fn build_hittable_rects(
             (
                 id,
                 Rectangle::new(
-                    Point::new((r.x + il) * UI_SCALE, (r.y + it) * UI_SCALE),
+                    Point::new((r.x + il) * ui_scale(), (r.y + it) * ui_scale()),
                     Size::new(
-                        (r.width - il - ir).max(0.0) * UI_SCALE,
-                        (r.height - it - ib).max(0.0) * UI_SCALE,
+                        (r.width - il - ir).max(0.0) * ui_scale(),
+                        (r.height - it - ib).max(0.0) * ui_scale(),
                     ),
                 ),
                 key,

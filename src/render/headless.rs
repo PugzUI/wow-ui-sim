@@ -322,11 +322,15 @@ fn clear_headless_render_target(
         width,
         height,
     };
+    // The Visualizer stage is an opaque, neutral black canvas.  Keeping the
+    // clear colour here (rather than relying on the shell CSS) makes native
+    // screenshots and live frames identical and removes the old tiled/marble
+    // simulator backdrop from every render path.
     pipeline.render_clear(
         &mut encoder,
         render_view,
         &clip_bounds_u32,
-        [0.05, 0.05, 0.08, 1.0],
+        [0.0, 0.0, 0.0, 1.0],
     );
     encoder
 }

@@ -499,9 +499,16 @@ fn apply_crop(img: image::RgbaImage, crop_str: &str) -> image::RgbaImage {
 }
 
 fn save_screenshot(img: &image::RgbaImage, output: &Path) {
+    if output.extension().and_then(|value| value.to_str()) == Some("png") {
+        if let Err(e) = img.save_with_format(output, image::ImageFormat::Png) {
+            eprintln!("Failed to save PNG: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
     let output = output.with_extension("webp");
     let encoder = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height());
-    let mem = encoder.encode(15.0);
+    let mem = encoder.encode(65.0);
     if let Err(e) = std::fs::write(&output, &*mem) {
         eprintln!("Failed to save WebP: {}", e);
         std::process::exit(1);
