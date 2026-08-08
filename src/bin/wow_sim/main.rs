@@ -97,6 +97,9 @@ enum Commands {
         width: u32,
         #[arg(long, default_value_t = 1200)]
         height: u32,
+        /// Apply an explicit UIParent scale before layout and capture.
+        #[arg(long)]
+        ui_scale: Option<f32>,
         #[arg(short, long)]
         filter: Option<String>,
         #[arg(long, value_name = "WxH+X+Y")]

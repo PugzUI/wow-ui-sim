@@ -45,6 +45,8 @@ pub enum Request {
         width: u32,
         /// Image height in pixels
         height: u32,
+        /// Optional UIParent scale applied before layout and capture.
+        ui_scale: Option<f32>,
         /// Render only this frame subtree (name substring match)
         filter: Option<String>,
         /// Crop the output image to WxH+X+Y (e.g., 700x150+400+650)
@@ -105,6 +107,7 @@ pub enum LuaCommand {
         output: String,
         width: u32,
         height: u32,
+        ui_scale: Option<f32>,
         filter: Option<String>,
         crop: Option<String>,
         manifest: Option<String>,
@@ -323,10 +326,13 @@ fn send_app_command_request(request: Request, cmd_tx: &mpsc::Sender<LuaCommand>)
             output,
             width,
             height,
+            ui_scale,
             filter,
             crop,
             manifest,
-        } => send_screenshot_command(cmd_tx, output, width, height, filter, crop, manifest),
+        } => send_screenshot_command(
+            cmd_tx, output, width, height, ui_scale, filter, crop, manifest,
+        ),
         Request::MouseMove { x, y } => send_mouse_move_command(cmd_tx, x, y),
         Request::MouseClick { x, y } => send_mouse_click_command(cmd_tx, x, y),
     }
@@ -369,6 +375,7 @@ fn send_screenshot_command(
     output: String,
     width: u32,
     height: u32,
+    ui_scale: Option<f32>,
     filter: Option<String>,
     crop: Option<String>,
     manifest: Option<String>,
@@ -377,6 +384,7 @@ fn send_screenshot_command(
         output,
         width,
         height,
+        ui_scale,
         filter,
         crop,
         manifest,
@@ -493,6 +501,7 @@ pub mod client {
                 output: output.to_string(),
                 width,
                 height,
+                ui_scale: None,
                 filter,
                 crop,
                 manifest: None,

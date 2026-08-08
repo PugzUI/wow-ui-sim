@@ -16,6 +16,22 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 const RECENT_FRAME_WINDOW_SIZE: usize = 60;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RuntimeScreenMetrics {
+    pub width: f64,
+    pub height: f64,
+    pub ui_scale: f64,
+    pub screen_width: f64,
+    pub screen_height: f64,
+    pub physical_width: f64,
+    pub physical_height: f64,
+    pub ui_parent_width: f64,
+    pub ui_parent_height: f64,
+    pub ui_parent_scale: f64,
+    pub ui_parent_effective_scale: f64,
+    pub weak_auras_options_open: bool,
+}
 const EDIT_MODE_LAYOUTS_INFO_LUA: &str = r#"
     local source = (EditModeManagerFrame and EditModeManagerFrame.layoutInfo) or C_EditMode.GetLayouts()
     if type(source) ~= "table" then
@@ -93,6 +109,65 @@ impl WowLuaEnv {
         // against the default dimensions. Replay Blizzard's anchor-changed
         // broadcast now that frames sit at their final screen positions.
         crate::lua_api::workarounds_editmode::invoke_anchor_changed_hooks(self);
+    }
+
+    /// Apply an explicit UI scale to the live runtime and public CVar surface.
+    pub fn set_ui_scale(&self, scale: f32) -> Result<()> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(crate::error::Error::Other(format!(
+                "UI scale must be a finite positive number, got {scale}"
+            )));
+        }
+        self.exec(&format!(
+            r#"
+            SetCVar("useUiScale", "1")
+            SetCVar("uiScale", "{scale:.6}")
+            UIParent:SetScale({scale:.6})
+        "#
+        ))?;
+        self.fire_event("UI_SCALE_CHANGED")?;
+        crate::lua_api::workarounds_editmode::invoke_anchor_changed_hooks(self);
+        Ok(())
+    }
+
+    /// Query the same runtime APIs addons use to observe stage geometry.
+    pub fn runtime_screen_metrics(&self) -> Result<RuntimeScreenMetrics> {
+        let metrics: (f64, f64, f64, f64, f64, f64, f64, f64, bool) = self.eval(
+            r#"
+            local physicalWidth, physicalHeight = GetPhysicalScreenSize()
+            local optionsOpen = type(WeakAuras) == "table"
+                and type(WeakAuras.IsOptionsOpen) == "function"
+                and WeakAuras.IsOptionsOpen() == true
+            return GetScreenWidth(), GetScreenHeight(), physicalWidth, physicalHeight,
+                UIParent:GetWidth(), UIParent:GetHeight(), UIParent:GetScale(),
+                UIParent:GetEffectiveScale(), optionsOpen
+        "#,
+        )?;
+        let (
+            screen_width,
+            screen_height,
+            physical_width,
+            physical_height,
+            ui_parent_width,
+            ui_parent_height,
+            ui_parent_scale,
+            ui_parent_effective_scale,
+            weak_auras_options_open,
+        ) = metrics;
+        Ok(RuntimeScreenMetrics {
+            width: physical_width,
+            height: physical_height,
+            ui_scale: ui_parent_effective_scale,
+            screen_width,
+            screen_height,
+            physical_width,
+            physical_height,
+            ui_parent_width,
+            ui_parent_height,
+            ui_parent_scale,
+            ui_parent_effective_scale,
+            weak_auras_options_open,
+        })
     }
 
     /// Select which UI surface should be loaded.

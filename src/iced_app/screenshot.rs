@@ -14,14 +14,18 @@ const CROP_FORMAT_EXAMPLE: &str = "700x150+400+650";
 impl App {
     /// Render a screenshot from the live app state and save to disk.
     pub(crate) fn render_screenshot(
-        &self,
+        &mut self,
         output: &str,
         width: u32,
         height: u32,
+        ui_scale: Option<f32>,
         filter: Option<&str>,
         crop: Option<&str>,
         manifest: Option<&str>,
     ) -> LuaResponse {
+        if let Err(error) = self.configure_screenshot_runtime(width, height, ui_scale) {
+            return LuaResponse::Error(error);
+        }
         let output_path = Path::new(output).to_path_buf();
         let (batch, mut glyph_atlas) = self.build_screenshot_batch(width, height, filter);
         let glyph_data = glyph_atlas_data(&mut glyph_atlas);
@@ -46,6 +50,27 @@ impl App {
             height,
             crop.is_some(),
         ))
+    }
+
+    pub(super) fn configure_screenshot_runtime(
+        &mut self,
+        width: u32,
+        height: u32,
+        ui_scale: Option<f32>,
+    ) -> Result<(), String> {
+        let size = iced::Size::new(width as f32, height as f32);
+        self.screen_size.set(size);
+        {
+            let env = self.env.borrow();
+            if let Some(scale) = ui_scale {
+                env.set_ui_scale(scale).map_err(|error| error.to_string())?;
+            }
+            env.set_screen_size(size.width, size.height);
+        }
+        *self.cached_hittable.borrow_mut() = None;
+        self.mark_all_strata_dirty();
+        self.flush_post_script_updates();
+        Ok(())
     }
 
     fn build_screenshot_batch(
@@ -93,10 +118,22 @@ pub(crate) fn write_visualizer_manifest(
     height: u32,
     filter: Option<&str>,
 ) {
+    let stage = env
+        .runtime_screen_metrics()
+        .ok()
+        .and_then(|metrics| serde_json::to_value(metrics).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "width": width,
+                "height": height,
+                "probe_error": "runtime screen metrics unavailable"
+            })
+        });
     let state = env.state().borrow();
     let visualizer_filter = filter == Some(SCALPEL_VISUALIZER_ROOT);
     let needle = filter.map(str::to_ascii_lowercase);
     let mut regions = Vec::new();
+    let mut elvui_frames = Vec::new();
     for id in state.widgets.iter_ids() {
         let Some(frame) = state.widgets.get(id) else {
             continue;
@@ -111,7 +148,8 @@ pub(crate) fn write_visualizer_manifest(
                 .as_deref()
                 .is_none_or(|value| name.to_ascii_lowercase().contains(value))
         };
-        if !selected {
+        let elvui = is_elvui_frame_name(name);
+        if !selected && !elvui {
             continue;
         }
         let rect =
@@ -120,6 +158,44 @@ pub(crate) fn write_visualizer_manifest(
             .parent_id
             .and_then(|parent_id| state.widgets.get(parent_id))
             .and_then(|parent| parent.name.clone());
+        let anchors: Vec<_> = frame
+            .anchors
+            .iter()
+            .map(|anchor| {
+                let relative_to = anchor
+                    .relative_to_id
+                    .and_then(|target_id| state.widgets.get(target_id as u64))
+                    .and_then(|target| target.name.clone())
+                    .or_else(|| anchor.relative_to.clone());
+                serde_json::json!({
+                    "point": format!("{:?}", anchor.point),
+                    "relative_to": relative_to,
+                    "relative_point": format!("{:?}", anchor.relative_point),
+                    "x_offset": anchor.x_offset,
+                    "y_offset": anchor.y_offset,
+                })
+            })
+            .collect();
+        if elvui {
+            elvui_frames.push(serde_json::json!({
+                "name": name,
+                "frame_type": format!("{:?}", frame.widget_type),
+                "effective_visible": state.widgets.is_ancestor_visible(id),
+                "parent": parent,
+                "x": rect.x,
+                "y": rect.y,
+                "width": rect.width,
+                "height": rect.height,
+                "scale": frame.scale,
+                "effective_scale": frame.effective_scale,
+                "alpha": frame.alpha,
+                "effective_alpha": frame.effective_alpha,
+                "anchors": anchors,
+            }));
+        }
+        if !selected {
+            continue;
+        }
         let display_id = name
             .strip_prefix("ScalpelVisualizer_")
             .or_else(|| name.strip_prefix("WeakAuras:"))
@@ -136,10 +212,14 @@ pub(crate) fn write_visualizer_manifest(
             "width": rect.width,
             "height": rect.height,
             "scale": frame.scale,
+            "effective_scale": frame.effective_scale,
             "alpha": frame.alpha,
+            "effective_alpha": frame.effective_alpha,
+            "anchors": anchors,
         }));
     }
-    let payload = serde_json::json!({"regions": regions});
+    let payload =
+        serde_json::json!({"stage": stage, "regions": regions, "elvui_frames": elvui_frames});
     let output = Path::new(path);
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -147,6 +227,10 @@ pub(crate) fn write_visualizer_manifest(
     if let Err(error) = std::fs::write(output, serde_json::to_vec_pretty(&payload).unwrap()) {
         eprintln!("[manifest] failed to write {}: {error}", output.display());
     }
+}
+
+fn is_elvui_frame_name(name: &str) -> bool {
+    name.starts_with("ElvUI") || name.starts_with("ElvUF_") || name.starts_with("ElvAB_")
 }
 
 fn glyph_atlas_data(glyph_atlas: &mut GlyphAtlas) -> Option<(&[u8], u32)> {

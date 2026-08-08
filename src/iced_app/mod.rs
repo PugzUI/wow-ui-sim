@@ -48,6 +48,8 @@ mod quad_builders_line;
 mod render;
 #[cfg(feature = "gui")]
 mod screenshot;
+#[cfg(all(feature = "gui", test))]
+mod screenshot_tests;
 #[cfg(feature = "gui")]
 mod slice_render;
 #[cfg(feature = "gui")]
