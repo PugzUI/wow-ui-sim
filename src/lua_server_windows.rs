@@ -33,8 +33,10 @@ pub enum Request {
         output: String,
         width: u32,
         height: u32,
+        ui_scale: Option<f32>,
         filter: Option<String>,
         crop: Option<String>,
+        manifest: Option<String>,
     },
 }
 
@@ -68,8 +70,10 @@ pub enum LuaCommand {
         output: String,
         width: u32,
         height: u32,
+        ui_scale: Option<f32>,
         filter: Option<String>,
         crop: Option<String>,
+        manifest: Option<String>,
         respond: mpsc::Sender<Response>,
     },
     MouseMove {

@@ -65,6 +65,7 @@ pub(super) fn dispatch_screenshot(dispatch: CommandDispatch) {
         output,
         width,
         height,
+        ui_scale,
         filter,
         crop,
         dump_tree,
@@ -80,6 +81,7 @@ pub(super) fn dispatch_screenshot(dispatch: CommandDispatch) {
             output,
             width,
             height,
+            ui_scale,
             filter,
             crop,
             delay: dispatch.delay,
@@ -243,6 +245,7 @@ pub(super) struct ScreenshotCommand<'a> {
     pub(super) output: PathBuf,
     pub(super) width: u32,
     pub(super) height: u32,
+    pub(super) ui_scale: Option<f32>,
     pub(super) filter: Option<String>,
     pub(super) crop: Option<String>,
     pub(super) delay: Option<u64>,
@@ -292,9 +295,21 @@ pub(super) fn run_screenshot(
 }
 
 fn write_manifest(env: &WowLuaEnv, path: &Path, width: u32, height: u32, filter: Option<&str>) {
+    let stage = env
+        .runtime_screen_metrics()
+        .ok()
+        .and_then(|metrics| serde_json::to_value(metrics).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "width": width,
+                "height": height,
+                "probe_error": "runtime screen metrics unavailable"
+            })
+        });
     let state = env.state().borrow();
     let needle = filter.map(str::to_ascii_lowercase);
     let mut regions = Vec::new();
+    let mut elvui_frames = Vec::new();
     for id in state.widgets.iter_ids() {
         let Some(frame) = state.widgets.get(id) else {
             continue;
@@ -302,10 +317,10 @@ fn write_manifest(env: &WowLuaEnv, path: &Path, width: u32, height: u32, filter:
         let Some(name) = frame.name.as_deref() else {
             continue;
         };
-        if !name.starts_with("WeakAuras:") && !name.starts_with("ScalpelVisualizer_") {
-            continue;
-        }
-        if !manifest_frame_matches(name, needle.as_deref()) {
+        let selected = (name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_"))
+            && manifest_frame_matches(name, needle.as_deref());
+        let elvui = is_elvui_frame_name(name);
+        if !selected && !elvui {
             continue;
         }
         let rect =
@@ -314,6 +329,44 @@ fn write_manifest(env: &WowLuaEnv, path: &Path, width: u32, height: u32, filter:
             .parent_id
             .and_then(|parent_id| state.widgets.get(parent_id))
             .and_then(|parent| parent.name.clone());
+        let anchors: Vec<_> = frame
+            .anchors
+            .iter()
+            .map(|anchor| {
+                let relative_to = anchor
+                    .relative_to_id
+                    .and_then(|target_id| state.widgets.get(target_id as u64))
+                    .and_then(|target| target.name.clone())
+                    .or_else(|| anchor.relative_to.clone());
+                serde_json::json!({
+                    "point": format!("{:?}", anchor.point),
+                    "relative_to": relative_to,
+                    "relative_point": format!("{:?}", anchor.relative_point),
+                    "x_offset": anchor.x_offset,
+                    "y_offset": anchor.y_offset,
+                })
+            })
+            .collect();
+        if elvui {
+            elvui_frames.push(serde_json::json!({
+                "name": name,
+                "frame_type": format!("{:?}", frame.widget_type),
+                "effective_visible": state.widgets.is_ancestor_visible(id),
+                "parent": parent,
+                "x": rect.x,
+                "y": rect.y,
+                "width": rect.width,
+                "height": rect.height,
+                "scale": frame.scale,
+                "effective_scale": frame.effective_scale,
+                "alpha": frame.alpha,
+                "effective_alpha": frame.effective_alpha,
+                "anchors": anchors,
+            }));
+        }
+        if !selected {
+            continue;
+        }
         let display_id = name
             .strip_prefix("ScalpelVisualizer_")
             .or_else(|| name.strip_prefix("WeakAuras:"))
@@ -330,16 +383,24 @@ fn write_manifest(env: &WowLuaEnv, path: &Path, width: u32, height: u32, filter:
             "width": rect.width,
             "height": rect.height,
             "scale": frame.scale,
+            "effective_scale": frame.effective_scale,
             "alpha": frame.alpha,
+            "effective_alpha": frame.effective_alpha,
+            "anchors": anchors,
         }));
     }
-    let payload = serde_json::json!({"regions": regions});
+    let payload =
+        serde_json::json!({"stage": stage, "regions": regions, "elvui_frames": elvui_frames});
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Err(error) = std::fs::write(path, serde_json::to_vec_pretty(&payload).unwrap()) {
         eprintln!("[manifest] failed to write {}: {error}", path.display());
     }
+}
+
+fn is_elvui_frame_name(name: &str) -> bool {
+    name.starts_with("ElvUI") || name.starts_with("ElvUF_") || name.starts_with("ElvAB_")
 }
 
 fn manifest_frame_matches(name: &str, filter: Option<&str>) -> bool {
@@ -354,6 +415,12 @@ fn manifest_frame_matches(name: &str, filter: Option<&str>) -> bool {
 
 fn prepare_screenshot_env(env: &WowLuaEnv, command: &ScreenshotCommand<'_>) {
     settle_headless_startup(env);
+    if let Some(scale) = command.ui_scale
+        && let Err(error) = env.set_ui_scale(scale)
+    {
+        eprintln!("[ui-scale] error: {error}");
+        std::process::exit(2);
+    }
     env.set_screen_size(command.width as f32, command.height as f32);
     wow_ui_sim::debug_helpers::debug_show_game_menu(env);
     run_screenshot_exec_lua(env, command);

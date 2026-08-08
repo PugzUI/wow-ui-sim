@@ -52,6 +52,7 @@ pub(crate) mod workarounds_editmode;
 
 // Re-export public types
 pub use env::WowLuaEnv;
+pub use env_runtime::RuntimeScreenMetrics;
 pub use globals::global_frames::hide_runtime_hidden_frames;
 pub use layout::{
     LayoutRect, anchor_position, compute_frame_rect, frame_position_from_anchor, get_parent_depth,
