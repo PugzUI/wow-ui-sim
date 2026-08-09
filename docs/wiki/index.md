@@ -43,6 +43,7 @@ LLM-maintained knowledge base for the wow-ui-sim project.
 
 | Page | Summary |
 |------|---------|
+| [[fontstring-ancestor-movement-cache]] | FontString state and geometry were correct but cached absolute glyph quads stayed at the old ancestor position; changed descendant layout rects now invalidate their render snapshots |
 | [[retail-ptr-full-startup-lua-errors]] | Full GUI startup logs caught PVPUI, PTR cursor, and Store micro-button errors missed by `lua-errors`; fixes added backed PVP/cursor surfaces and guarded the Store inbound fallback |
 | [[lib-test-failure-sweep-2026-06]] | Nine accumulated lib-test failures: ScriptErrors missing from runtime foundations inverted the SharedXMLBase load order; `hooksecurefunc(C_AddOns, "LoadAddOn")` is silently refused so post-load repairs must use `apply_blizzard_post_load_patches`; two more pieces of code lost in the classic rebase; duplicated `== nil`-guarded Lua installers drifting; tests stale against deliberate semantic changes |
 | [[store-secure-pool-constructors]] | Retail Store blank/red cards came from `__secureenv.CreateFramePoolCollection` retaining the simulator fallback after `Blizzard_SharedXMLBase` replaced `_G` with Blizzard's proxy-backed constructor; secure replay of SharedXMLBase Lua now populates secureenv directly |

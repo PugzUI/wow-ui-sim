@@ -2,6 +2,15 @@
 
 Chronological record of wiki operations.
 
+## [2026-08-09] investigation | FontString ancestor movement cache
+
+Created `investigations/fontstring-ancestor-movement-cache.md` after a
+Lua-created FontString reported correct API/manifest state but rendered no
+screenshot pixels following unnamed-parent movement. Recorded that layout
+recomputed descendant rectangles without invalidating their cached absolute
+glyph vertices, the shared rect-change invalidation fix, and the GPU raster
+regression using the bundled Friz Quadrata font. Updated `index.md`.
+
 ## [2026-07-02] update | XML method binding timing
 
 Updated `systems/xml-template-system.md` after live PTR probing and simulator

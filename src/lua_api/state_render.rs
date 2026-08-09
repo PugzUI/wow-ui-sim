@@ -226,8 +226,22 @@ impl SimState {
             .get(id)
             .map(|f| f.children.clone())
             .unwrap_or_default();
+        let rect_changed = widgets.get(id).is_none_or(|frame| {
+            frame.layout_rect.is_none_or(|previous| {
+                previous.x != rect.x
+                    || previous.y != rect.y
+                    || previous.width != rect.width
+                    || previous.height != rect.height
+            })
+        });
         if let Some(f) = widgets.get_mut(id) {
             f.layout_rect = Some(rect);
+        }
+        // Cached frame snapshots contain vertices in absolute screen coordinates.
+        // Recomputing an ancestor therefore changes descendant output even when
+        // none of the descendant's own Lua-visible properties changed.
+        if rect_changed {
+            widgets.mark_visual_dirty(id);
         }
         widgets.mark_layout_resolved(id);
         for child_id in children {
