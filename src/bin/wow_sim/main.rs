@@ -109,6 +109,9 @@ enum Commands {
         /// Write a machine-readable manifest of materialized WeakAuras frames.
         #[arg(long)]
         manifest: Option<PathBuf>,
+        /// Resolve this exact WeakAuras display through WeakAuras.GetRegion for the manifest.
+        #[arg(long = "manifest-id", value_name = "DISPLAY_ID")]
+        requested_ids: Vec<String>,
     },
 
     /// Show unique Lua errors as JSON (suppresses other output)

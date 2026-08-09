@@ -37,6 +37,8 @@ pub enum Request {
         filter: Option<String>,
         crop: Option<String>,
         manifest: Option<String>,
+        #[serde(default)]
+        requested_ids: Vec<String>,
     },
 }
 
@@ -74,6 +76,7 @@ pub enum LuaCommand {
         filter: Option<String>,
         crop: Option<String>,
         manifest: Option<String>,
+        requested_ids: Vec<String>,
         respond: mpsc::Sender<Response>,
     },
     MouseMove {

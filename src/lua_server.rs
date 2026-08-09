@@ -53,6 +53,9 @@ pub enum Request {
         crop: Option<String>,
         /// Optional machine-readable native region manifest path.
         manifest: Option<String>,
+        /// Exact WeakAuras display IDs to resolve through WeakAuras.GetRegion.
+        #[serde(default)]
+        requested_ids: Vec<String>,
     },
     /// Move the in-app mouse cursor and dispatch hover scripts.
     MouseMove {
@@ -111,6 +114,7 @@ pub enum LuaCommand {
         filter: Option<String>,
         crop: Option<String>,
         manifest: Option<String>,
+        requested_ids: Vec<String>,
         respond: mpsc::Sender<Response>,
     },
     MouseMove {
@@ -330,8 +334,17 @@ fn send_app_command_request(request: Request, cmd_tx: &mpsc::Sender<LuaCommand>)
             filter,
             crop,
             manifest,
+            requested_ids,
         } => send_screenshot_command(
-            cmd_tx, output, width, height, ui_scale, filter, crop, manifest,
+            cmd_tx,
+            output,
+            width,
+            height,
+            ui_scale,
+            filter,
+            crop,
+            manifest,
+            requested_ids,
         ),
         Request::MouseMove { x, y } => send_mouse_move_command(cmd_tx, x, y),
         Request::MouseClick { x, y } => send_mouse_click_command(cmd_tx, x, y),
@@ -379,6 +392,7 @@ fn send_screenshot_command(
     filter: Option<String>,
     crop: Option<String>,
     manifest: Option<String>,
+    requested_ids: Vec<String>,
 ) -> Response {
     send_command(cmd_tx, |respond| LuaCommand::Screenshot {
         output,
@@ -388,6 +402,7 @@ fn send_screenshot_command(
         filter,
         crop,
         manifest,
+        requested_ids,
         respond,
     })
 }
@@ -505,6 +520,7 @@ pub mod client {
                 filter,
                 crop,
                 manifest: None,
+                requested_ids: Vec::new(),
             },
         )?;
         match response {
@@ -656,6 +672,80 @@ mod tests {
 
         response_thread.join().unwrap();
         assert!(matches!(response, Response::Quads(body) if body == "quad dump"));
+    }
+
+    #[test]
+    fn screenshot_request_preserves_exact_manifest_ids() {
+        let request = serde_json::to_string(&Request::Screenshot {
+            output: "/tmp/capture.png".to_string(),
+            width: 2560,
+            height: 1440,
+            ui_scale: Some(0.53),
+            filter: None,
+            crop: None,
+            manifest: Some("/tmp/capture.json".to_string()),
+            requested_ids: vec!["Aura A".to_string(), "Aura B".to_string()],
+        })
+        .unwrap();
+        let parsed = parse_request(&request).expect("screenshot request should parse");
+        assert!(matches!(
+            parsed,
+            Request::Screenshot {
+                requested_ids,
+                filter: None,
+                ..
+            } if requested_ids == ["Aura A", "Aura B"]
+        ));
+    }
+
+    #[test]
+    fn screenshot_request_defaults_missing_manifest_ids_for_older_clients() {
+        let parsed = parse_request(
+            r#"{"Screenshot":{"output":"/tmp/capture.png","width":2560,"height":1440,"ui_scale":0.53,"filter":null,"crop":null,"manifest":"/tmp/capture.json"}}"#,
+        )
+        .expect("legacy screenshot request should parse");
+        assert!(matches!(
+            parsed,
+            Request::Screenshot { requested_ids, .. } if requested_ids.is_empty()
+        ));
+    }
+
+    #[test]
+    fn handle_request_forwards_exact_manifest_ids() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let response_thread = thread::spawn(move || {
+            let command = cmd_rx.recv().expect("command should be sent");
+            match command {
+                LuaCommand::Screenshot {
+                    requested_ids,
+                    filter,
+                    respond,
+                    ..
+                } => {
+                    assert_eq!(requested_ids, ["Aura A", "Aura B"]);
+                    assert_eq!(filter, None);
+                    respond
+                        .send(Response::Output("captured".to_string()))
+                        .unwrap();
+                }
+                _ => panic!("expected screenshot command"),
+            }
+        });
+        let response = handle_request(
+            Request::Screenshot {
+                output: "/tmp/capture.png".to_string(),
+                width: 2560,
+                height: 1440,
+                ui_scale: Some(0.53),
+                filter: None,
+                crop: None,
+                manifest: Some("/tmp/capture.json".to_string()),
+                requested_ids: vec!["Aura A".to_string(), "Aura B".to_string()],
+            },
+            &cmd_tx,
+        );
+        response_thread.join().unwrap();
+        assert!(matches!(response, Response::Output(body) if body == "captured"));
     }
 
     #[test]
