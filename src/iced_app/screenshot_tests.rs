@@ -75,6 +75,7 @@ fn visualizer_manifest_records_runtime_stage_probes() {
         2560,
         1440,
         Some("__SCALPEL_VISUALIZER__"),
+        &[],
     );
 
     let payload: serde_json::Value =
@@ -93,4 +94,90 @@ fn visualizer_manifest_records_runtime_stage_probes() {
     );
     assert_eq!(payload["elvui_frames"][0]["anchors"][0]["x_offset"], 10.0);
     assert_eq!(payload["elvui_frames"][0]["anchors"][0]["y_offset"], 20.0);
+}
+
+#[test]
+fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() {
+    let mut app = build_test_app();
+    app.configure_screenshot_runtime(2560, 1440, Some(0.53))
+        .expect("runtime geometry should apply");
+    let display_id = "Actual Aura";
+    app.env
+        .borrow()
+        .exec(
+            r#"
+            WeakAuras = WeakAuras or {}
+            local actual = CreateFrame("Frame", nil, UIParent)
+            actual:SetSize(64, 48)
+            actual:SetPoint("CENTER", UIParent, "CENTER", 140, 70)
+            actual:Show()
+            local overlap = CreateFrame("Frame", "OverlappingUnrelated", UIParent)
+            overlap:SetSize(64, 48)
+            overlap:SetPoint("CENTER", UIParent, "CENTER", 140, 70)
+            overlap:Show()
+            WeakAuras.GetRegion = function(id)
+                if id == "Actual Aura" then return actual end
+                return nil
+            end
+            "#,
+        )
+        .expect("WeakAuras region fixture should initialize");
+    let actual_frame_id = app
+        .env
+        .borrow()
+        .weak_aura_region_frame_id(display_id)
+        .expect("region lookup should execute")
+        .expect("region should resolve");
+    let temp = tempfile::tempdir().expect("tempdir should initialize");
+    let manifest = temp.path().join("actual-region.json");
+    write_visualizer_manifest(
+        &app.env.borrow(),
+        manifest.to_str().expect("manifest path should be UTF-8"),
+        2560,
+        1440,
+        None,
+        &[display_id.to_string(), "Missing Aura".to_string()],
+    );
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest).expect("manifest should exist"))
+            .expect("manifest should be valid JSON");
+    assert_eq!(payload["manifest_scope"], "requested_weakauras");
+    assert!(payload["render_scope"].is_null());
+    assert_eq!(
+        payload["unresolved_requested_ids"],
+        serde_json::json!(["Missing Aura"])
+    );
+    assert_eq!(payload["regions"].as_array().unwrap().len(), 1);
+    let region = &payload["regions"][0];
+    assert_eq!(region["display_id"], display_id);
+    assert_eq!(region["native_frame_id"], actual_frame_id);
+    assert_eq!(region["native_region_root"], true);
+    assert_eq!(region["marker"], false);
+    assert_eq!(region["resolved_via"], "WeakAuras.GetRegion");
+    assert_ne!(region["name"], "OverlappingUnrelated");
+    assert!((region["width"].as_f64().unwrap() - 64.0 * 0.53).abs() < 0.001);
+    assert!((region["height"].as_f64().unwrap() - 48.0 * 0.53).abs() < 0.001);
+}
+
+#[test]
+fn weak_aura_region_lookup_escapes_display_ids() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+    env.exec(
+        r#"
+        WeakAuras = WeakAuras or {}
+        local actual = CreateFrame("Frame", nil, UIParent)
+        WeakAuras.GetRegion = function(id)
+            if id == "Aüra \\\"one\\\"\\\\path" then return actual end
+            return nil
+        end
+        "#,
+    )
+    .expect("lookup fixture should initialize");
+
+    assert!(
+        env.weak_aura_region_frame_id("Aüra \\\"one\\\"\\\\path")
+            .expect("lookup should execute")
+            .is_some()
+    );
 }

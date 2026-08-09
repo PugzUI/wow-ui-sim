@@ -48,6 +48,8 @@ mod quad_builders_line;
 mod render;
 #[cfg(feature = "gui")]
 mod screenshot;
+#[cfg(feature = "gui")]
+pub use screenshot::write_visualizer_manifest;
 #[cfg(all(feature = "gui", test))]
 mod screenshot_tests;
 #[cfg(feature = "gui")]

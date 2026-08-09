@@ -5,7 +5,9 @@ use super::env_init::{init_builtin_frames, init_lua_state};
 use super::state::SimState;
 use crate::Result;
 use crate::font::WowFontSystem;
-use crate::lua_api::methods::{create_string, registry_get, registry_set, table_set};
+use crate::lua_api::methods::{
+    create_string, native_frame_id_from_val, registry_get, registry_set, table_set,
+};
 use crate::xml::{clear_templates, register_intrinsic_templates};
 use rilua::{LuaApi, LuaApiMut, Val};
 use std::cell::RefCell;
@@ -171,6 +173,23 @@ impl WowLuaEnv {
             lower.split_whitespace().next().unwrap_or_default(),
             "return" | "local" | "if" | "for" | "while" | "repeat" | "do" | "function"
         )
+    }
+
+    /// Evaluate a Lua expression that returns a frame and resolve its native widget ID.
+    pub fn eval_native_frame_id(&self, code: &str) -> Result<Option<u64>> {
+        let value: Val = self.eval(code)?;
+        let lua = self.lua.borrow();
+        Ok(native_frame_id_from_val(lua.state(), value))
+    }
+
+    /// Resolve the exact native frame returned by WeakAuras.GetRegion(display_id).
+    pub fn weak_aura_region_frame_id(&self, display_id: &str) -> Result<Option<u64>> {
+        let escaped = crate::loader::helpers::escape_lua_string(display_id);
+        self.eval_native_frame_id(&format!(
+            "return type(WeakAuras) == 'table' \
+             and type(WeakAuras.GetRegion) == 'function' \
+             and WeakAuras.GetRegion(\"{escaped}\") or nil"
+        ))
     }
 
     /// Create a Lua string value on the active rilua VM.

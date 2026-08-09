@@ -22,6 +22,7 @@ impl App {
         filter: Option<&str>,
         crop: Option<&str>,
         manifest: Option<&str>,
+        requested_ids: &[String],
     ) -> LuaResponse {
         if let Err(error) = self.configure_screenshot_runtime(width, height, ui_scale) {
             return LuaResponse::Error(error);
@@ -40,7 +41,14 @@ impl App {
             return LuaResponse::Error(format!("Failed to save screenshot: {}", e));
         }
         if let Some(manifest) = manifest {
-            write_visualizer_manifest(&self.env.borrow(), manifest, width, height, filter);
+            write_visualizer_manifest(
+                &self.env.borrow(),
+                manifest,
+                width,
+                height,
+                filter,
+                requested_ids,
+            );
         }
 
         LuaResponse::Output(format_screenshot_saved_message(
@@ -111,12 +119,13 @@ impl App {
     }
 }
 
-pub(crate) fn write_visualizer_manifest(
+pub fn write_visualizer_manifest(
     env: &WowLuaEnv,
     path: &str,
     width: u32,
     height: u32,
     filter: Option<&str>,
+    requested_ids: &[String],
 ) {
     let stage = env
         .runtime_screen_metrics()
@@ -129,11 +138,14 @@ pub(crate) fn write_visualizer_manifest(
                 "probe_error": "runtime screen metrics unavailable"
             })
         });
+    let (resolved, unresolved_requested_ids) =
+        resolve_requested_weakauras_regions(env, requested_ids);
     let state = env.state().borrow();
     let visualizer_filter = filter == Some(SCALPEL_VISUALIZER_ROOT);
     let needle = filter.map(str::to_ascii_lowercase);
     let mut regions = Vec::new();
     let mut elvui_frames = Vec::new();
+
     for id in state.widgets.iter_ids() {
         let Some(frame) = state.widgets.get(id) else {
             continue;
@@ -141,6 +153,21 @@ pub(crate) fn write_visualizer_manifest(
         let Some(name) = frame.name.as_deref() else {
             continue;
         };
+        let rect =
+            crate::layout::compute_frame_rect(&state.widgets, id, width as f32, height as f32);
+        if is_elvui_frame_name(name) {
+            let mut geometry = frame_geometry_json(&state, frame, name, rect);
+            if let Some(object) = geometry.as_object_mut() {
+                object.insert(
+                    "frame_type".into(),
+                    format!("{:?}", frame.widget_type).into(),
+                );
+            }
+            elvui_frames.push(geometry);
+        }
+        if !requested_ids.is_empty() {
+            continue;
+        }
         let selected = if visualizer_filter {
             name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_")
         } else {
@@ -148,51 +175,6 @@ pub(crate) fn write_visualizer_manifest(
                 .as_deref()
                 .is_none_or(|value| name.to_ascii_lowercase().contains(value))
         };
-        let elvui = is_elvui_frame_name(name);
-        if !selected && !elvui {
-            continue;
-        }
-        let rect =
-            crate::layout::compute_frame_rect(&state.widgets, id, width as f32, height as f32);
-        let parent = frame
-            .parent_id
-            .and_then(|parent_id| state.widgets.get(parent_id))
-            .and_then(|parent| parent.name.clone());
-        let anchors: Vec<_> = frame
-            .anchors
-            .iter()
-            .map(|anchor| {
-                let relative_to = anchor
-                    .relative_to_id
-                    .and_then(|target_id| state.widgets.get(target_id as u64))
-                    .and_then(|target| target.name.clone())
-                    .or_else(|| anchor.relative_to.clone());
-                serde_json::json!({
-                    "point": format!("{:?}", anchor.point),
-                    "relative_to": relative_to,
-                    "relative_point": format!("{:?}", anchor.relative_point),
-                    "x_offset": anchor.x_offset,
-                    "y_offset": anchor.y_offset,
-                })
-            })
-            .collect();
-        if elvui {
-            elvui_frames.push(serde_json::json!({
-                "name": name,
-                "frame_type": format!("{:?}", frame.widget_type),
-                "effective_visible": state.widgets.is_ancestor_visible(id),
-                "parent": parent,
-                "x": rect.x,
-                "y": rect.y,
-                "width": rect.width,
-                "height": rect.height,
-                "scale": frame.scale,
-                "effective_scale": frame.effective_scale,
-                "alpha": frame.alpha,
-                "effective_alpha": frame.effective_alpha,
-                "anchors": anchors,
-            }));
-        }
         if !selected {
             continue;
         }
@@ -200,26 +182,49 @@ pub(crate) fn write_visualizer_manifest(
             .strip_prefix("ScalpelVisualizer_")
             .or_else(|| name.strip_prefix("WeakAuras:"))
             .unwrap_or(name);
-        regions.push(serde_json::json!({
-            "display_id": display_id,
-            "encoded_id": name.starts_with("ScalpelVisualizer_"),
-            "region_type": format!("{:?}", frame.widget_type),
-            "effective_visible": state.widgets.is_ancestor_visible(id),
-            "parent": parent.as_ref().map(|value| value.trim_start_matches("WeakAuras:").to_string()),
-            "is_root": parent.is_none(),
-            "x": rect.x,
-            "y": rect.y,
-            "width": rect.width,
-            "height": rect.height,
-            "scale": frame.scale,
-            "effective_scale": frame.effective_scale,
-            "alpha": frame.alpha,
-            "effective_alpha": frame.effective_alpha,
-            "anchors": anchors,
-        }));
+        let mut geometry = frame_geometry_json(&state, frame, name, rect);
+        insert_region_metadata(
+            &mut geometry,
+            display_id,
+            frame,
+            name.starts_with("ScalpelVisualizer_"),
+        );
+        regions.push(geometry);
     }
-    let payload =
-        serde_json::json!({"stage": stage, "regions": regions, "elvui_frames": elvui_frames});
+
+    for requested in resolved {
+        let Some(frame) = state.widgets.get(requested.frame_id) else {
+            continue;
+        };
+        let rect = crate::layout::compute_frame_rect(
+            &state.widgets,
+            requested.frame_id,
+            width as f32,
+            height as f32,
+        );
+        let synthetic_name = frame.name.clone().unwrap_or_else(|| {
+            format!("WeakAuras:{}#{}", requested.display_id, requested.frame_id)
+        });
+        let mut geometry = frame_geometry_json(&state, frame, &synthetic_name, rect);
+        insert_region_metadata(&mut geometry, &requested.display_id, frame, false);
+        if let Some(object) = geometry.as_object_mut() {
+            object.insert("native_region_root".into(), true.into());
+            object.insert("resolved_via".into(), "WeakAuras.GetRegion".into());
+        }
+        regions.push(geometry);
+    }
+
+    regions.sort_by_key(manifest_sort_key);
+    elvui_frames.sort_by_key(manifest_sort_key);
+    let payload = serde_json::json!({
+        "stage": stage,
+        "render_scope": filter,
+        "manifest_scope": if requested_ids.is_empty() { "render_filter" } else { "requested_weakauras" },
+        "requested_ids": requested_ids,
+        "unresolved_requested_ids": unresolved_requested_ids,
+        "regions": regions,
+        "elvui_frames": elvui_frames,
+    });
     let output = Path::new(path);
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -227,6 +232,105 @@ pub(crate) fn write_visualizer_manifest(
     if let Err(error) = std::fs::write(output, serde_json::to_vec_pretty(&payload).unwrap()) {
         eprintln!("[manifest] failed to write {}: {error}", output.display());
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedWeakAuraRegion {
+    display_id: String,
+    frame_id: u64,
+}
+
+fn resolve_requested_weakauras_regions(
+    env: &WowLuaEnv,
+    requested_ids: &[String],
+) -> (Vec<ResolvedWeakAuraRegion>, Vec<String>) {
+    let mut resolved = Vec::new();
+    let mut unresolved = Vec::new();
+    for display_id in requested_ids {
+        match env.weak_aura_region_frame_id(display_id) {
+            Ok(Some(frame_id)) => resolved.push(ResolvedWeakAuraRegion {
+                display_id: display_id.clone(),
+                frame_id,
+            }),
+            Ok(None) | Err(_) => unresolved.push(display_id.clone()),
+        }
+    }
+    (resolved, unresolved)
+}
+
+fn frame_geometry_json(
+    state: &crate::lua_api::state::SimState,
+    frame: &crate::widget::Frame,
+    name: &str,
+    rect: crate::LayoutRect,
+) -> serde_json::Value {
+    let parent = frame
+        .parent_id
+        .and_then(|parent_id| state.widgets.get(parent_id))
+        .and_then(|parent| parent.name.clone());
+    let anchors = frame
+        .anchors
+        .iter()
+        .map(|anchor| {
+            let relative_to = anchor
+                .relative_to_id
+                .and_then(|target_id| state.widgets.get(target_id as u64))
+                .and_then(|target| target.name.clone())
+                .or_else(|| anchor.relative_to.clone());
+            serde_json::json!({
+                "point": format!("{:?}", anchor.point),
+                "relative_to": relative_to,
+                "relative_native_frame_id": anchor.relative_to_id,
+                "relative_point": format!("{:?}", anchor.relative_point),
+                "x_offset": anchor.x_offset,
+                "y_offset": anchor.y_offset,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "name": name,
+        "coordinate_space": "physical_pixels",
+        "native_frame_id": frame.id,
+        "effective_visible": state.widgets.is_ancestor_visible(frame.id),
+        "parent": parent,
+        "parent_native_frame_id": frame.parent_id,
+        "x": rect.x,
+        "y": rect.y,
+        "width": rect.width,
+        "height": rect.height,
+        "scale": frame.scale,
+        "effective_scale": frame.effective_scale,
+        "alpha": frame.alpha,
+        "effective_alpha": frame.effective_alpha,
+        "anchors": anchors,
+    })
+}
+
+fn insert_region_metadata(
+    geometry: &mut serde_json::Value,
+    display_id: &str,
+    frame: &crate::widget::Frame,
+    marker: bool,
+) {
+    if let Some(object) = geometry.as_object_mut() {
+        object.insert("display_id".into(), display_id.into());
+        object.insert("marker".into(), marker.into());
+        object.insert("native_region_root".into(), false.into());
+        object.insert(
+            "region_type".into(),
+            format!("{:?}", frame.widget_type).into(),
+        );
+        object.insert("is_root".into(), frame.parent_id.is_none().into());
+    }
+}
+
+fn manifest_sort_key(value: &serde_json::Value) -> String {
+    value
+        .get("display_id")
+        .or_else(|| value.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn is_elvui_frame_name(name: &str) -> bool {

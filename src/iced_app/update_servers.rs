@@ -91,9 +91,18 @@ impl App {
                 filter,
                 crop,
                 manifest,
+                requested_ids,
                 respond,
             } => self.handle_lua_screenshot(
-                output, width, height, ui_scale, filter, crop, manifest, respond,
+                output,
+                width,
+                height,
+                ui_scale,
+                filter,
+                crop,
+                manifest,
+                requested_ids,
+                respond,
             ),
             LuaCommand::MouseMove { x, y, respond } => self.handle_lua_mouse_move(x, y, respond),
             LuaCommand::MouseClick { x, y, respond } => self.handle_lua_mouse_click(x, y, respond),
@@ -170,6 +179,7 @@ impl App {
         filter: Option<String>,
         crop: Option<String>,
         manifest: Option<String>,
+        requested_ids: Vec<String>,
         respond: mpsc::Sender<LuaResponse>,
     ) {
         let result = self.render_screenshot(
@@ -180,6 +190,7 @@ impl App {
             filter.as_deref(),
             crop.as_deref(),
             manifest.as_deref(),
+            &requested_ids,
         );
         let _ = respond.send(result);
     }
