@@ -285,6 +285,7 @@ pub(super) fn run_screenshot(
             &path.to_string_lossy(),
             command.width,
             command.height,
+            wow_ui_sim::render::texture::ui_scale(),
             command.filter.as_deref(),
             &command.requested_ids,
         );

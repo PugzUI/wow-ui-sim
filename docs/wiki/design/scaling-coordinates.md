@@ -1,53 +1,93 @@
 # Scaling and Coordinates
 
-WoW uses a non-standard coordinate system that differs from most GUI frameworks. Getting this right is critical for correct anchor resolution and layout rendering.
+The simulator exposes several coordinate systems because WoW APIs, anchor resolution, renderer layout, and PNG output do not share one origin or unit. Visualizer manifest schema version 2 names each space and records both logical and physical geometry so consumers never infer a scale.
 
-## WoW Coordinate System
+## Canonical Coordinate Spaces
 
-**Bottom-left origin, Y increases upward** (not the typical Y-down of web/desktop frameworks):
+| Space | Manifest identifier | Origin and axes | Purpose |
+|---|---|---|---|
+| Physical output | `physical_pixels` | Top-left; X right; Y down | Lossless PNG dimensions and raster-localization rectangles. |
+| WoW screen | `wow_screen_units` | Bottom-left; X right; Y up | `GetScreenWidth()`, `GetScreenHeight()`, and UIParent query semantics. |
+| Renderer viewport | `renderer_viewport_units` | Top-left; X right; Y down | Post-anchor, pre-raster `LayoutRect` values used to emit quads. |
+| Local frame | `local_frame_units` | Frame/anchor dependent | Raw `SetSize`, local frame scale, and untransformed region dimensions. |
+| Parent anchor | `parent_relative_ui_units` | X right; Y up | `SetPoint` offsets relative to the selected parent anchor. |
 
-- `(0, 0)` = bottom-left corner
-- `(screenWidth, screenHeight)` = top-right corner
-- Default anchor point when none is specified: `TOPLEFT`
-- Reference screen size (from wowless): `1280×720`
+WoW anchor offsets are converted to the renderer convention during layout. For example, positive WoW Y offsets move upward, so top-left renderer resolution subtracts the scaled offset.
 
-The renderer itself runs in iced's top-left Y-down screen space. The orthographic projection in `src/render/shader/pipeline.rs` (`Uniforms::new`) maps `(0,0)–(width,height)` screen coords to clip space `(-1,-1)–(1,1)`, with the Y row negated and translated `+1` so screen-top sits at clip `+Y`. WoW's Y-up convention is reconciled inside the anchor/layout pass before quads reach the GPU.
+## Fixed Native Visualizer Stage
 
-## Current Implementation
+At the required 2560 × 1440 output and UI scale 0.53, the public API contract is:
 
-**Canvas-driven sizing** — layout has no fixed screen size. The canvas `size` is threaded through `RebuildStrataBatches` in `src/iced_app/render/rebuild.rs` and consumed by the strata emit / quad-builder pipeline, so WoW coords map 1:1 to canvas pixels and adapt to the window.
+| API | Value | Space |
+|---|---:|---|
+| `GetPhysicalScreenSize()` | `2560, 1440` | Physical output pixels. |
+| `GetScreenWidth()` | `4830.188679...` | WoW screen units. |
+| `GetScreenHeight()` | `2716.981132...` | WoW screen units. |
+| `UIParent:GetWidth()` | `4830.188679...` | WoW screen units. |
+| `UIParent:GetHeight()` | `2716.981132...` | WoW screen units. |
+| `UIParent:GetScale()` | `0.53` | Local UIParent scale. |
+| `UIParent:GetEffectiveScale()` | `0.53` | Effective UIParent scale. |
 
-**Lua screen-size globals** are dynamic. `WowLuaEnv::set_screen_size()` (`src/lua_api/env_runtime.rs:75`) re-runs `install_screen_size_globals()` (`env_runtime.rs:288`), which redefines `GetScreenWidth`, `GetScreenHeight`, and `GetPhysicalScreenSize` to return the live canvas dimensions. There is no hardcoded `1280×720` fallback in the Lua surface — the values track whatever the host window passes in.
+`GetPhysicalScreenSize()` never returns logical values. `GetScreenWidth()` and `GetScreenHeight()` divide the physical dimensions by UIParent effective scale. UIParent dimension queries resolve its rendered rectangle back into WoW units.
 
-**`UI_SCALE`** is still defined as `1.0` in `src/render/texture.rs:8` and is referenced throughout `src/iced_app/` (masking, strata emit, quad builders, rebuild, render textures) when converting from unscaled WoW coordinates to display pixels. The constant is the single knob if global scale ever needs to change.
+## Authoritative Transform
 
-## Known Issues Fixed
+`src/render/coordinates.rs` owns the only renderer-to-raster conversion:
 
-1. **Hardcoded anchor override** — `main.rs` previously forced `TOPLEFT (10, -10)` on the root frame instead of using the XML-defined anchor. Removed.
-2. **Screen size mismatch** — internal screen size was hardcoded; now driven by the canvas via `set_screen_size()`.
-3. **Hardcoded `GetScreenWidth/Height`** — replaced by `install_screen_size_globals()` re-run on resize.
-4. **Debug purple border** — removed.
+```text
+physical_x      = renderer_x      × renderer_scale
+physical_y      = renderer_y      × renderer_scale
+physical_width  = renderer_width  × renderer_scale
+physical_height = renderer_height × renderer_scale
+```
 
-## Open Items
+The Visualizer renderer scale is 0.53. `src/iced_app/strata_emit.rs` uses this converter when emitting screen rectangles, and `src/iced_app/screenshot.rs` uses the same converter for manifest geometry.
 
-- Y-axis convention is split between WoW (bottom-left Y-up) and the renderer (top-left Y-down). The conversion path in anchor resolution / quad emission should be documented end-to-end; see [[../investigations/anchor-resolution]] / `docs/anchor-resolution.md`.
-- `CENTER` anchor behavior under live canvas resize is not covered by an automated regression.
+Frame `effective_scale` and stage `renderer_scale` are separate values. Effective scale already participates in anchor and size resolution before a `LayoutRect` exists. Renderer scale performs the final conversion from that logical renderer rectangle into PNG pixels. They are equal for common direct UIParent children at the fixed stage, but consumers must use `renderer_scale` or `physical_geometry`, not assume equality for nested locally-scaled frames.
 
-## Key Files
+## Manifest Schema Version 2
 
-| File | Role |
-|------|------|
-| `src/iced_app/render/rebuild.rs` | Strata rebuild — threads canvas `size` into emitters |
-| `src/iced_app/strata_emit.rs`, `quad_builders_line.rs`, `masking.rs`, `update_helpers.rs`, `render_textures.rs` | Apply `UI_SCALE` when converting WoW rects to display pixels |
-| `src/render/shader/pipeline.rs` | Orthographic projection `Uniforms::new(width, height)` |
-| `src/render/texture.rs` | `UI_SCALE` constant |
-| `src/lua_api/env_runtime.rs` | `set_screen_size`, `install_screen_size_globals` (`GetScreenWidth`/`GetScreenHeight`/`GetPhysicalScreenSize`) |
+Each manifest records stage dimensions, all coordinate-space identifiers, the renderer scale, and dual geometry for every region and classified ElvUI frame. Flat `x`, `y`, `width`, and `height` fields remain for compatibility but now always equal `physical_geometry`.
+
+```json
+{
+  "stage": {
+    "physical_width": 2560,
+    "physical_height": 1440,
+    "logical_width": 4830.1887,
+    "logical_height": 2716.9811,
+    "renderer_scale": 0.53
+  },
+  "region": {
+    "logical_geometry": { "x": 1351.02, "y": 218.36, "width": 33.92, "height": 33.92 },
+    "physical_geometry": { "x": 716.0406, "y": 115.7308, "width": 17.9776, "height": 17.9776 }
+  }
+}
+```
+
+Region records also include native identity, parent identity, local and effective visibility, local size and scale, effective scale, alpha, parent-relative anchors, text/media metadata, and coordinate-space version. This is sufficient to compare manifest geometry with the exact raster without consulting renderer implementation details.
+
+## Runtime Paths
+
+Warm IPC capture and one-shot CLI recovery both pass the active renderer scale into manifest generation. The same native batch is used for the PNG and its manifest. Cropping occurs only after full-stage rendering; evidence that requires stage correspondence must use uncropped captures.
+
+## Regression Coverage
+
+- Unit tests pin the 2560 × 1440, 0.53 API values.
+- Coordinate tests pin `1351.02 → 716.0406` and `33.92 → 17.9776`.
+- Manifest tests verify every physical axis equals the corresponding logical axis multiplied by renderer scale.
+- Exact WeakAuras region tests cover unnamed roots and owned FontString descendants resolved through `WeakAuras.GetRegion`.
 
 ## Sources
 
-- Verified against source 2026-04-26
+- `src/render/coordinates.rs` — coordinate identifiers and renderer-to-physical transform.
+- `src/lua_api/env_runtime.rs` — screen APIs and UIParent scale probes.
+- `src/layout.rs` — anchor resolution and effective-scale application.
+- `src/iced_app/strata_emit.rs` — logical rectangle to screen rectangle emission.
+- `src/iced_app/screenshot.rs` — native manifest schema and geometry serialization.
 
 ## See Also
 
-- [[architecture-overview]] — overall Lua/Rust system design
-- [[debug-tools]] — debug overlays for verifying anchor positions
+- [[layout-system]] — anchor and multi-anchor resolution.
+- [[rendering-pipeline]] — quad emission and GPU projection.
+- [[mists-elvui-startup-compat]] — ElvUI screen-size compatibility history.

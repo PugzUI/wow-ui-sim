@@ -6,6 +6,8 @@ pub mod font {
     pub use crate::font::*;
 }
 #[cfg(feature = "gui")]
+pub mod coordinates;
+#[cfg(feature = "gui")]
 pub mod glyph;
 #[cfg(feature = "gui")]
 pub mod headless;
