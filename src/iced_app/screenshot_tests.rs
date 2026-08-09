@@ -7,6 +7,28 @@ use crate::texture::TextureManager;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+fn assert_physical_geometry_matches(region: &serde_json::Value) {
+    let logical = &region["logical_geometry"];
+    let physical = &region["physical_geometry"];
+    let scale = region["renderer_scale"]
+        .as_f64()
+        .expect("renderer scale should be numeric");
+
+    for field in ["x", "y", "width", "height"] {
+        let logical_value = logical[field]
+            .as_f64()
+            .unwrap_or_else(|| panic!("logical {field} should be numeric"));
+        let physical_value = physical[field]
+            .as_f64()
+            .unwrap_or_else(|| panic!("physical {field} should be numeric"));
+        assert!(
+            (physical_value - logical_value * scale).abs() < 0.001,
+            "physical {field} must equal logical {field} times renderer scale"
+        );
+        assert_eq!(region[field], physical[field]);
+    }
+}
+
 fn build_test_app() -> App {
     let env = Rc::new(RefCell::new(
         WowLuaEnv::new().expect("Lua environment should initialize"),
@@ -74,6 +96,7 @@ fn visualizer_manifest_records_runtime_stage_probes() {
         manifest.to_str().expect("manifest path should be UTF-8"),
         2560,
         1440,
+        0.53,
         Some("__SCALPEL_VISUALIZER__"),
         &[],
     );
@@ -81,19 +104,38 @@ fn visualizer_manifest_records_runtime_stage_probes() {
     let payload: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest).expect("manifest should exist"))
             .expect("manifest should be valid JSON");
+    assert_eq!(payload["coordinate_space_version"], 2);
     assert_eq!(payload["stage"]["width"], 2560.0);
     assert_eq!(payload["stage"]["height"], 1440.0);
+    assert_eq!(payload["stage"]["physical_width"], 2560);
+    assert_eq!(payload["stage"]["physical_height"], 1440);
     assert!((payload["stage"]["ui_scale"].as_f64().unwrap() - 0.53).abs() < 0.0001);
-    assert_eq!(payload["stage"]["weak_auras_options_open"], false);
-    assert_eq!(payload["elvui_frames"][0]["name"], "ElvUF_Player");
-    assert!((payload["elvui_frames"][0]["width"].as_f64().unwrap() - 106.0).abs() < 0.001);
-    assert!((payload["elvui_frames"][0]["height"].as_f64().unwrap() - 21.2).abs() < 0.001);
+    assert!((payload["stage"]["renderer_scale"].as_f64().unwrap() - 0.53).abs() < 0.0001);
+    assert!((payload["stage"]["logical_width"].as_f64().unwrap() - 2560.0 / 0.53).abs() < 0.01);
+    assert!((payload["stage"]["logical_height"].as_f64().unwrap() - 1440.0 / 0.53).abs() < 0.01);
     assert_eq!(
-        payload["elvui_frames"][0]["anchors"][0]["relative_to"],
-        "UIParent"
+        payload["stage"]["coordinate_spaces"]["physical"]["id"],
+        "physical_pixels"
     );
-    assert_eq!(payload["elvui_frames"][0]["anchors"][0]["x_offset"], 10.0);
-    assert_eq!(payload["elvui_frames"][0]["anchors"][0]["y_offset"], 20.0);
+    assert_eq!(
+        payload["stage"]["coordinate_spaces"]["logical"]["id"],
+        "wow_screen_units"
+    );
+    assert_eq!(payload["stage"]["weak_auras_options_open"], false);
+    let frame = &payload["elvui_frames"][0];
+    assert_eq!(frame["name"], "ElvUF_Player");
+    assert_eq!(frame["coordinate_space"], "physical_pixels");
+    assert_eq!(
+        frame["logical_geometry"]["coordinate_space"],
+        "renderer_viewport_units"
+    );
+    assert!((frame["logical_geometry"]["width"].as_f64().unwrap() - 106.0).abs() < 0.001);
+    assert!((frame["physical_geometry"]["width"].as_f64().unwrap() - 56.18).abs() < 0.001);
+    assert_eq!(frame["visible"], true);
+    assert_physical_geometry_matches(frame);
+    assert_eq!(frame["anchors"][0]["relative_to"], "UIParent");
+    assert_eq!(frame["anchors"][0]["x_offset"], 10.0);
+    assert_eq!(frame["anchors"][0]["y_offset"], 20.0);
 }
 
 #[test]
@@ -139,6 +181,7 @@ fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() 
         manifest.to_str().expect("manifest path should be UTF-8"),
         2560,
         1440,
+        0.53,
         None,
         &[display_id.to_string(), "Missing Aura".to_string()],
     );
@@ -169,8 +212,18 @@ fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() 
     assert_eq!(root["marker"], false);
     assert_eq!(root["resolved_via"], "WeakAuras.GetRegion");
     assert_ne!(root["name"], "OverlappingUnrelated");
-    assert!((root["width"].as_f64().unwrap() - 64.0 * 0.53).abs() < 0.001);
-    assert!((root["height"].as_f64().unwrap() - 48.0 * 0.53).abs() < 0.001);
+    assert_eq!(root["coordinate_space_version"], 2);
+    assert_eq!(root["coordinate_space"], "physical_pixels");
+    assert_eq!(
+        root["logical_geometry"]["coordinate_space"],
+        "renderer_viewport_units"
+    );
+    assert!((root["logical_geometry"]["width"].as_f64().unwrap() - 64.0 * 0.53).abs() < 0.001);
+    assert!((root["logical_geometry"]["height"].as_f64().unwrap() - 48.0 * 0.53).abs() < 0.001);
+    assert!((root["width"].as_f64().unwrap() - 64.0 * 0.53 * 0.53).abs() < 0.001);
+    assert!((root["height"].as_f64().unwrap() - 48.0 * 0.53 * 0.53).abs() < 0.001);
+    assert!((root["effective_scale"].as_f64().unwrap() - 0.53).abs() < 0.001);
+    assert_physical_geometry_matches(root);
     assert_eq!(label["display_id"], display_id);
     assert_eq!(label["owner_native_frame_id"], actual_frame_id);
     assert_eq!(label["native_region_depth"], 1);
@@ -179,6 +232,8 @@ fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() 
     assert_eq!(label["visual_leaf"], true);
     assert_eq!(label["region_type"], "FontString");
     assert_eq!(label["text"], "OK");
+    assert_eq!(label["visible"], true);
+    assert_physical_geometry_matches(label);
     assert_ne!(label["name"], "OverlappingUnrelated");
 }
 

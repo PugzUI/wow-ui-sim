@@ -7,7 +7,7 @@ LLM-maintained knowledge base for the wow-ui-sim project.
 | Page | Summary |
 |------|---------|
 | [[architecture-overview]] | Project goals, Lua+Rust dual system, module layout, design decisions, phase summary |
-| [[scaling-coordinates]] | WoW bottom-left Y-up coordinate system, canvas sizing, projection matrix, known issues |
+| [[scaling-coordinates]] | Versioned physical, WoW-screen, renderer, local-frame, and anchor coordinate contracts for native capture |
 | [[debug-tools]] | Inspector panel (middle-click), dump-tree CLI (standalone + connected), debug overlay flags |
 
 ## reference/

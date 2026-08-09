@@ -361,9 +361,10 @@ fn intersect_rects(a: crate::LayoutRect, b: crate::LayoutRect) -> Option<crate::
 }
 
 fn layout_rect_to_screen_rect(rect: crate::LayoutRect) -> Rectangle {
+    let physical = crate::render::coordinates::renderer_rect_to_physical(rect, ui_scale());
     Rectangle::new(
-        Point::new(rect.x * ui_scale(), rect.y * ui_scale()),
-        Size::new(rect.width * ui_scale(), rect.height * ui_scale()),
+        Point::new(physical.x, physical.y),
+        Size::new(physical.width, physical.height),
     )
 }
 

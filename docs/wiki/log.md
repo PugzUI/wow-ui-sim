@@ -1431,3 +1431,7 @@ Added parser and loader support for TOC entries annotated with `[Bootstrap]`, mo
 ## [2026-07-01] correction | `[Bootstrap]` preserves TOC order
 
 Updated `systems/addon-loading.md` after live-client probes showed `[Bootstrap]` is not a separate pass and must not move files out of TOC order. `TocFile` now keeps annotated files in `files` and records a per-file bootstrap flag. Startup loads full TOCs for non-LoD addons and only annotated bootstrap files for LoD addons, preserving addon order; runtime `LoadAddOn` skips already-executed bootstrap files and a self `LoadAddOn(thisAddon)` call from bootstrap remains a benign reentrancy no-op.
+
+## [2026-08-09] update | Native Visualizer coordinate contract v2
+
+Updated `design/scaling-coordinates.md` after proving that native Visualizer manifest rectangles were pre-raster renderer units mislabeled as physical pixels. Added explicit physical, WoW-screen, renderer, local-frame, and parent-anchor spaces; pinned the 2560 × 1440 / 0.53 API values; documented the single renderer-to-physical transform; and defined dual manifest geometry with flat compatibility fields now carrying real PNG pixels. The renderer and manifest share `src/render/coordinates.rs`, preventing caller-specific conversion rules.

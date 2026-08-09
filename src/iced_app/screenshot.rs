@@ -47,6 +47,7 @@ impl App {
                 manifest,
                 width,
                 height,
+                crate::render::texture::ui_scale(),
                 filter,
                 requested_ids,
             );
@@ -120,15 +121,19 @@ impl App {
     }
 }
 
-pub fn write_visualizer_manifest(
+fn visualizer_stage_json(
     env: &WowLuaEnv,
-    path: &str,
     width: u32,
     height: u32,
-    filter: Option<&str>,
-    requested_ids: &[String],
-) {
-    let stage = env
+    renderer_scale: f32,
+) -> serde_json::Value {
+    use crate::render::coordinates::{
+        BOTTOM_LEFT_ORIGIN, COORDINATE_SPACE_VERSION, LOCAL_FRAME_UNITS, PARENT_RELATIVE_UI_UNITS,
+        PHYSICAL_PIXELS, RENDERER_VIEWPORT_UNITS, TOP_LEFT_ORIGIN, WOW_SCREEN_UNITS,
+        renderer_viewport_size,
+    };
+
+    let mut stage = env
         .runtime_screen_metrics()
         .ok()
         .and_then(|metrics| serde_json::to_value(metrics).ok())
@@ -136,9 +141,59 @@ pub fn write_visualizer_manifest(
             serde_json::json!({
                 "width": width,
                 "height": height,
+                "physical_width": width,
+                "physical_height": height,
+                "ui_scale": renderer_scale,
                 "probe_error": "runtime screen metrics unavailable"
             })
         });
+    let (renderer_width, renderer_height) =
+        renderer_viewport_size(width as f32, height as f32, renderer_scale);
+    let logical_width = stage
+        .get("screen_width")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(renderer_width as f64);
+    let logical_height = stage
+        .get("screen_height")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(renderer_height as f64);
+
+    if let Some(object) = stage.as_object_mut() {
+        object.insert(
+            "coordinate_space_version".into(),
+            COORDINATE_SPACE_VERSION.into(),
+        );
+        object.insert("physical_width".into(), width.into());
+        object.insert("physical_height".into(), height.into());
+        object.insert("logical_width".into(), logical_width.into());
+        object.insert("logical_height".into(), logical_height.into());
+        object.insert("renderer_viewport_width".into(), renderer_width.into());
+        object.insert("renderer_viewport_height".into(), renderer_height.into());
+        object.insert("renderer_scale".into(), renderer_scale.into());
+        object.insert(
+            "coordinate_spaces".into(),
+            serde_json::json!({
+                "physical": {"id": PHYSICAL_PIXELS, "origin": TOP_LEFT_ORIGIN, "y_direction": "down"},
+                "logical": {"id": WOW_SCREEN_UNITS, "origin": BOTTOM_LEFT_ORIGIN, "y_direction": "up"},
+                "renderer": {"id": RENDERER_VIEWPORT_UNITS, "origin": TOP_LEFT_ORIGIN, "y_direction": "down"},
+                "local_frame": {"id": LOCAL_FRAME_UNITS, "origin": "frame_anchor_dependent"},
+                "parent_anchor": {"id": PARENT_RELATIVE_UI_UNITS, "y_direction": "up"}
+            }),
+        );
+    }
+    stage
+}
+
+pub fn write_visualizer_manifest(
+    env: &WowLuaEnv,
+    path: &str,
+    width: u32,
+    height: u32,
+    renderer_scale: f32,
+    filter: Option<&str>,
+    requested_ids: &[String],
+) {
+    let stage = visualizer_stage_json(env, width, height, renderer_scale);
     let (resolved, unresolved_requested_ids) =
         resolve_requested_weakauras_regions(env, requested_ids);
     let state = env.state().borrow();
@@ -157,7 +212,7 @@ pub fn write_visualizer_manifest(
         let rect =
             crate::layout::compute_frame_rect(&state.widgets, id, width as f32, height as f32);
         if is_elvui_frame_name(name) {
-            let mut geometry = frame_geometry_json(&state, frame, name, rect);
+            let mut geometry = frame_geometry_json(&state, frame, name, rect, renderer_scale);
             if let Some(object) = geometry.as_object_mut() {
                 object.insert(
                     "frame_type".into(),
@@ -183,7 +238,7 @@ pub fn write_visualizer_manifest(
             .strip_prefix("ScalpelVisualizer_")
             .or_else(|| name.strip_prefix("WeakAuras:"))
             .unwrap_or(name);
-        let mut geometry = frame_geometry_json(&state, frame, name, rect);
+        let mut geometry = frame_geometry_json(&state, frame, name, rect, renderer_scale);
         insert_region_metadata(
             &mut geometry,
             display_id,
@@ -194,12 +249,20 @@ pub fn write_visualizer_manifest(
     }
 
     for requested in resolved {
-        append_requested_region_subtree(&state, &requested, width, height, &mut regions);
+        append_requested_region_subtree(
+            &state,
+            &requested,
+            width,
+            height,
+            renderer_scale,
+            &mut regions,
+        );
     }
 
     regions.sort_by_key(manifest_sort_key);
     elvui_frames.sort_by_key(manifest_sort_key);
     let payload = serde_json::json!({
+        "coordinate_space_version": crate::render::coordinates::COORDINATE_SPACE_VERSION,
         "stage": stage,
         "render_scope": filter,
         "manifest_scope": if requested_ids.is_empty() { "render_filter" } else { "requested_weakauras" },
@@ -246,6 +309,7 @@ fn append_requested_region_subtree(
     requested: &ResolvedWeakAuraRegion,
     width: u32,
     height: u32,
+    renderer_scale: f32,
     regions: &mut Vec<serde_json::Value>,
 ) {
     let mut stack = vec![(requested.frame_id, 0_u32, "root".to_string())];
@@ -269,7 +333,7 @@ fn append_requested_region_subtree(
                 requested.display_id, requested.frame_id, path
             )
         });
-        let mut geometry = frame_geometry_json(state, frame, &synthetic_name, rect);
+        let mut geometry = frame_geometry_json(state, frame, &synthetic_name, rect, renderer_scale);
         insert_region_metadata(&mut geometry, &requested.display_id, frame, false);
         if let Some(object) = geometry.as_object_mut() {
             object.insert("owner_native_frame_id".into(), requested.frame_id.into());
@@ -309,7 +373,15 @@ fn frame_geometry_json(
     frame: &crate::widget::Frame,
     name: &str,
     rect: crate::LayoutRect,
+    renderer_scale: f32,
 ) -> serde_json::Value {
+    use crate::render::coordinates::{
+        COORDINATE_SPACE_VERSION, Geometry, LOCAL_FRAME_UNITS, PARENT_RELATIVE_UI_UNITS,
+        PHYSICAL_PIXELS, TOP_LEFT_ORIGIN,
+    };
+
+    let logical_geometry = Geometry::renderer(rect);
+    let physical_geometry = Geometry::physical(rect, renderer_scale);
     let parent = frame
         .parent_id
         .and_then(|parent_id| state.widgets.get(parent_id))
@@ -324,6 +396,9 @@ fn frame_geometry_json(
                 .and_then(|target| target.name.clone())
                 .or_else(|| anchor.relative_to.clone());
             serde_json::json!({
+                "coordinate_space": PARENT_RELATIVE_UI_UNITS,
+                "x_direction": "right",
+                "y_direction": "up",
                 "point": format!("{:?}", anchor.point),
                 "relative_to": relative_to,
                 "relative_native_frame_id": anchor.relative_to_id,
@@ -335,16 +410,28 @@ fn frame_geometry_json(
         .collect::<Vec<_>>();
     serde_json::json!({
         "name": name,
-        "coordinate_space": "physical_pixels",
+        "coordinate_space_version": COORDINATE_SPACE_VERSION,
+        "coordinate_space": PHYSICAL_PIXELS,
+        "origin": TOP_LEFT_ORIGIN,
         "native_frame_id": frame.id,
+        "visible": frame.visible,
         "effective_visible": state.widgets.is_ancestor_visible(frame.id),
         "parent": parent,
         "parent_native_frame_id": frame.parent_id,
-        "x": rect.x,
-        "y": rect.y,
-        "width": rect.width,
-        "height": rect.height,
+        "x": physical_geometry.x,
+        "y": physical_geometry.y,
+        "width": physical_geometry.width,
+        "height": physical_geometry.height,
+        "logical_geometry": logical_geometry,
+        "physical_geometry": physical_geometry,
+        "local_geometry": {
+            "coordinate_space": LOCAL_FRAME_UNITS,
+            "width": frame.width,
+            "height": frame.height,
+        },
+        "renderer_scale": renderer_scale,
         "scale": frame.scale,
+        "local_scale": frame.scale,
         "effective_scale": frame.effective_scale,
         "alpha": frame.alpha,
         "effective_alpha": frame.effective_alpha,
