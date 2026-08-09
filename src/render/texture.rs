@@ -8,16 +8,23 @@ use std::sync::OnceLock;
 /// Default WoW UI scale for non-Visualizer simulator surfaces.
 pub const UI_SCALE: f32 = 1.0;
 
+/// Aura Visualizer physical stage width.
+pub const VISUALIZER_WIDTH: f32 = 2560.0;
+/// Aura Visualizer physical stage height.
+pub const VISUALIZER_HEIGHT: f32 = 1440.0;
 /// Aura Visualizer scale for its fixed 2560x1440 stage.
 pub const VISUALIZER_UI_SCALE: f32 = 0.53;
+
+pub fn visualizer_mode() -> bool {
+    std::env::var("WOW_SIM_VISUALIZER")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
 
 pub fn ui_scale() -> f32 {
     static ACTIVE_SCALE: OnceLock<f32> = OnceLock::new();
     *ACTIVE_SCALE.get_or_init(|| {
-        if std::env::var("WOW_SIM_VISUALIZER")
-            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        {
+        if visualizer_mode() {
             VISUALIZER_UI_SCALE
         } else {
             UI_SCALE

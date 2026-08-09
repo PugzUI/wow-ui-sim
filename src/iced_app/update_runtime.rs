@@ -255,18 +255,25 @@ impl App {
         }
     }
 
-    pub(crate) fn sync_screen_size_to_state(&self, size: iced::Size) {
+    pub(crate) fn sync_screen_size_to_state(&self, window_size: iced::Size) {
+        let size = runtime_screen_size(window_size, crate::render::texture::visualizer_mode());
         let env = self.env.borrow();
         let state = env.state().borrow();
-        if (state.screen_width - size.width).abs() > 0.5
-            || (state.screen_height - size.height).abs() > 0.5
+        // SimState keeps the physical viewport dimensions. GetScreenWidth and
+        // UIParent:GetWidth expose logical UI units through the active scale.
+        let current_physical_width = state.screen_width;
+        let current_physical_height = state.screen_height;
+        if (current_physical_width - size.width).abs() > 0.5
+            || (current_physical_height - size.height).abs() > 0.5
         {
             crate::logging::println_elapsed(&format!(
-                "Window size: {}x{} (was {}x{})",
+                "Runtime screen size: {}x{} (window {}x{}, was {}x{})",
                 size.width as i32,
                 size.height as i32,
-                state.screen_width as i32,
-                state.screen_height as i32
+                window_size.width as i32,
+                window_size.height as i32,
+                current_physical_width as i32,
+                current_physical_height as i32
             ));
             drop(state);
             env.set_screen_size(size.width, size.height);
@@ -562,4 +569,32 @@ fn texture_request_priority(path: &str) -> (u8, u8) {
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Interface/WorldMap/"));
     let is_crop = path.contains("@crop:");
     (u8::from(!is_world_map), u8::from(is_crop))
+}
+
+fn runtime_screen_size(window_size: iced::Size, visualizer: bool) -> iced::Size {
+    if visualizer {
+        iced::Size::new(
+            crate::render::texture::VISUALIZER_WIDTH,
+            crate::render::texture::VISUALIZER_HEIGHT,
+        )
+    } else {
+        window_size
+    }
+}
+
+#[cfg(test)]
+mod stage_contract_tests {
+    use super::runtime_screen_size;
+
+    #[test]
+    fn visualizer_ignores_host_window_resize_events() {
+        assert_eq!(
+            runtime_screen_size(iced::Size::new(1010.0, 576.2), true),
+            iced::Size::new(2560.0, 1440.0),
+        );
+        assert_eq!(
+            runtime_screen_size(iced::Size::new(1010.0, 576.2), false),
+            iced::Size::new(1010.0, 576.2),
+        );
+    }
 }

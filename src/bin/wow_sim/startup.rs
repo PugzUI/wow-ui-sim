@@ -25,7 +25,7 @@ type InitResult = Result<
 
 pub(super) fn init_and_load(args: &Args, screen: ScreenKind) -> InitResult {
     let env = WowLuaEnv::new().expect("failed to create Lua env");
-    configure_screen_size(&env, args);
+    configure_screen_size(&env, args)?;
     let font_system = create_font_system(args);
     init_environment(args, &env, &font_system)?;
     env.set_screen_mode(screen);
@@ -45,23 +45,45 @@ pub(super) fn init_and_load(args: &Args, screen: ScreenKind) -> InitResult {
     Ok((env, font_system, saved_vars))
 }
 
-fn configure_screen_size(env: &WowLuaEnv, args: &Args) {
-    let (w, h) = command_screen_size(&args.command);
+fn configure_screen_size(env: &WowLuaEnv, args: &Args) -> Result<(), Box<dyn Error>> {
+    let (width, height, ui_scale) = command_screen_geometry(&args.command);
     let phase_start = Instant::now();
-    env.set_screen_size(w, h);
+    if let Some(scale) = ui_scale {
+        env.set_ui_scale(scale)?;
+    }
+    env.set_screen_size(width, height);
+    let scale_label = ui_scale.map_or_else(String::new, |scale| format!(" at {scale:.2}"));
     logging::eprintln_elapsed(&format!(
-        "[Startup] screen size set to {w:.0}x{h:.0} in {:.2?}",
+        "[Startup] screen geometry set to {width:.0}x{height:.0}{scale_label} in {:.2?}",
         phase_start.elapsed()
     ));
+    Ok(())
 }
 
-fn command_screen_size(command: &Option<Commands>) -> (f32, f32) {
+fn command_screen_geometry(command: &Option<Commands>) -> (f32, f32, Option<f32>) {
     match command {
         #[cfg(feature = "gui")]
-        Some(Commands::Screenshot { width, height, .. }) => (*width as f32, *height as f32),
-        Some(Commands::DumpTree { width, height, .. }) => (*width as f32, *height as f32),
-        None => (1024.0, 768.0),
-        _ => (1600.0, 1200.0),
+        Some(Commands::Screenshot {
+            width,
+            height,
+            ui_scale,
+            ..
+        }) => (*width as f32, *height as f32, *ui_scale),
+        Some(Commands::DumpTree { width, height, .. }) => (*width as f32, *height as f32, None),
+        None => default_screen_geometry(wow_ui_sim::render::texture::visualizer_mode()),
+        _ => (1600.0, 1200.0, None),
+    }
+}
+
+fn default_screen_geometry(visualizer: bool) -> (f32, f32, Option<f32>) {
+    if visualizer {
+        (
+            wow_ui_sim::render::texture::VISUALIZER_WIDTH,
+            wow_ui_sim::render::texture::VISUALIZER_HEIGHT,
+            Some(wow_ui_sim::render::texture::VISUALIZER_UI_SCALE),
+        )
+    } else {
+        (1024.0, 768.0, None)
     }
 }
 
@@ -187,4 +209,15 @@ fn load_server_snapshot_action_bars(
             )),
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_screen_geometry;
+
+    #[test]
+    fn visualizer_starts_at_the_native_stage_before_addon_loading() {
+        assert_eq!(default_screen_geometry(true), (2560.0, 1440.0, Some(0.53)),);
+        assert_eq!(default_screen_geometry(false), (1024.0, 768.0, None));
+    }
 }
