@@ -1,5 +1,6 @@
 //! IPC screenshot rendering for the running app.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::iced_app::frame_collect::SCALPEL_VISUALIZER_ROOT;
@@ -193,25 +194,7 @@ pub fn write_visualizer_manifest(
     }
 
     for requested in resolved {
-        let Some(frame) = state.widgets.get(requested.frame_id) else {
-            continue;
-        };
-        let rect = crate::layout::compute_frame_rect(
-            &state.widgets,
-            requested.frame_id,
-            width as f32,
-            height as f32,
-        );
-        let synthetic_name = frame.name.clone().unwrap_or_else(|| {
-            format!("WeakAuras:{}#{}", requested.display_id, requested.frame_id)
-        });
-        let mut geometry = frame_geometry_json(&state, frame, &synthetic_name, rect);
-        insert_region_metadata(&mut geometry, &requested.display_id, frame, false);
-        if let Some(object) = geometry.as_object_mut() {
-            object.insert("native_region_root".into(), true.into());
-            object.insert("resolved_via".into(), "WeakAuras.GetRegion".into());
-        }
-        regions.push(geometry);
+        append_requested_region_subtree(&state, &requested, width, height, &mut regions);
     }
 
     regions.sort_by_key(manifest_sort_key);
@@ -256,6 +239,69 @@ fn resolve_requested_weakauras_regions(
         }
     }
     (resolved, unresolved)
+}
+
+fn append_requested_region_subtree(
+    state: &crate::lua_api::state::SimState,
+    requested: &ResolvedWeakAuraRegion,
+    width: u32,
+    height: u32,
+    regions: &mut Vec<serde_json::Value>,
+) {
+    let mut stack = vec![(requested.frame_id, 0_u32, "root".to_string())];
+    let mut visited = HashSet::new();
+    while let Some((frame_id, depth, path)) = stack.pop() {
+        if !visited.insert(frame_id) {
+            continue;
+        }
+        let Some(frame) = state.widgets.get(frame_id) else {
+            continue;
+        };
+        let rect = crate::layout::compute_frame_rect(
+            &state.widgets,
+            frame_id,
+            width as f32,
+            height as f32,
+        );
+        let synthetic_name = frame.name.clone().unwrap_or_else(|| {
+            format!(
+                "WeakAuras:{}#{}:{}",
+                requested.display_id, requested.frame_id, path
+            )
+        });
+        let mut geometry = frame_geometry_json(state, frame, &synthetic_name, rect);
+        insert_region_metadata(&mut geometry, &requested.display_id, frame, false);
+        if let Some(object) = geometry.as_object_mut() {
+            object.insert("owner_native_frame_id".into(), requested.frame_id.into());
+            object.insert("native_region_depth".into(), depth.into());
+            object.insert("native_region_path".into(), path.clone().into());
+            object.insert("native_region_root".into(), (depth == 0).into());
+            object.insert("native_region_descendant".into(), (depth > 0).into());
+            object.insert(
+                "resolved_via".into(),
+                if depth == 0 {
+                    "WeakAuras.GetRegion"
+                } else {
+                    "WeakAuras.GetRegion subtree"
+                }
+                .into(),
+            );
+            object.insert(
+                "visual_leaf".into(),
+                matches!(
+                    frame.widget_type,
+                    crate::widget::WidgetType::Texture
+                        | crate::widget::WidgetType::FontString
+                        | crate::widget::WidgetType::Line
+                )
+                .into(),
+            );
+        }
+        regions.push(geometry);
+        for (index, child_id) in frame.children.iter().copied().enumerate().rev() {
+            stack.push((child_id, depth + 1, format!("{path}.{index}")));
+        }
+    }
 }
 
 fn frame_geometry_json(
@@ -303,6 +349,14 @@ fn frame_geometry_json(
         "alpha": frame.alpha,
         "effective_alpha": frame.effective_alpha,
         "anchors": anchors,
+        "text": frame.text,
+        "texture": frame.texture,
+        "texture_file_data_id": frame.texture_file_data_id,
+        "atlas": frame.atlas,
+        "font": frame.font,
+        "font_size": frame.font_size,
+        "draw_layer": format!("{:?}", frame.draw_layer),
+        "draw_sub_layer": frame.draw_sub_layer,
     })
 }
 
@@ -325,12 +379,24 @@ fn insert_region_metadata(
 }
 
 fn manifest_sort_key(value: &serde_json::Value) -> String {
-    value
+    let owner = value
         .get("display_id")
         .or_else(|| value.get("name"))
         .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_string()
+        .unwrap_or_default();
+    let depth = value
+        .get("native_region_depth")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let path = value
+        .get("native_region_path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let frame_id = value
+        .get("native_frame_id")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    format!("{owner}\u{0}{depth:08}\u{0}{path}\u{0}{frame_id:020}")
 }
 
 fn is_elvui_frame_name(name: &str) -> bool {

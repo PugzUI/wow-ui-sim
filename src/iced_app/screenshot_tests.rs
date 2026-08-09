@@ -111,6 +111,10 @@ fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() 
             actual:SetSize(64, 48)
             actual:SetPoint("CENTER", UIParent, "CENTER", 140, 70)
             actual:Show()
+            local label = actual:CreateFontString(nil, "OVERLAY")
+            label:SetText("OK")
+            label:SetPoint("CENTER", actual, "CENTER", 0, 0)
+            label:Show()
             local overlap = CreateFrame("Frame", "OverlappingUnrelated", UIParent)
             overlap:SetSize(64, 48)
             overlap:SetPoint("CENTER", UIParent, "CENTER", 140, 70)
@@ -148,16 +152,34 @@ fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() 
         payload["unresolved_requested_ids"],
         serde_json::json!(["Missing Aura"])
     );
-    assert_eq!(payload["regions"].as_array().unwrap().len(), 1);
-    let region = &payload["regions"][0];
-    assert_eq!(region["display_id"], display_id);
-    assert_eq!(region["native_frame_id"], actual_frame_id);
-    assert_eq!(region["native_region_root"], true);
-    assert_eq!(region["marker"], false);
-    assert_eq!(region["resolved_via"], "WeakAuras.GetRegion");
-    assert_ne!(region["name"], "OverlappingUnrelated");
-    assert!((region["width"].as_f64().unwrap() - 64.0 * 0.53).abs() < 0.001);
-    assert!((region["height"].as_f64().unwrap() - 48.0 * 0.53).abs() < 0.001);
+    let regions = payload["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 2);
+    let root = regions
+        .iter()
+        .find(|region| region["native_region_root"] == true)
+        .expect("exact root should be present");
+    let label = regions
+        .iter()
+        .find(|region| region["native_region_descendant"] == true)
+        .expect("owned FontString should be present");
+    assert_eq!(root["display_id"], display_id);
+    assert_eq!(root["native_frame_id"], actual_frame_id);
+    assert_eq!(root["owner_native_frame_id"], actual_frame_id);
+    assert_eq!(root["native_region_depth"], 0);
+    assert_eq!(root["marker"], false);
+    assert_eq!(root["resolved_via"], "WeakAuras.GetRegion");
+    assert_ne!(root["name"], "OverlappingUnrelated");
+    assert!((root["width"].as_f64().unwrap() - 64.0 * 0.53).abs() < 0.001);
+    assert!((root["height"].as_f64().unwrap() - 48.0 * 0.53).abs() < 0.001);
+    assert_eq!(label["display_id"], display_id);
+    assert_eq!(label["owner_native_frame_id"], actual_frame_id);
+    assert_eq!(label["native_region_depth"], 1);
+    assert_eq!(label["native_region_path"], "root.0");
+    assert_eq!(label["resolved_via"], "WeakAuras.GetRegion subtree");
+    assert_eq!(label["visual_leaf"], true);
+    assert_eq!(label["region_type"], "FontString");
+    assert_eq!(label["text"], "OK");
+    assert_ne!(label["name"], "OverlappingUnrelated");
 }
 
 #[test]
