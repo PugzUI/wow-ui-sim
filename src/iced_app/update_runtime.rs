@@ -31,7 +31,12 @@ impl App {
 
     pub(super) fn flush_post_script_updates(&mut self) {
         self.env.borrow().state().borrow_mut().ensure_layout_rects();
-        if let Err(e) = self.env.borrow().fire_on_update(0.016) {
+        let elapsed = if self.manual_frame_time_elapsed.is_some() {
+            0.0
+        } else {
+            0.016
+        };
+        if let Err(e) = self.env.borrow().fire_on_update(elapsed) {
             crate::logging::eprintln_elapsed(&format!("[OnUpdate] post-script flush error: {e}"));
         }
         self.invalidate_after_lua_mutation();

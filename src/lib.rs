@@ -59,6 +59,7 @@ pub mod lua_server;
 #[cfg(not(unix))]
 #[path = "lua_server_windows.rs"]
 pub mod lua_server;
+pub(crate) mod lua_server_contract;
 #[path = "../data/manifest_interface_data.rs"]
 pub mod manifest_interface_data;
 #[path = "../data/map_art.rs"]

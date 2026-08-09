@@ -10,6 +10,7 @@ use iced_layout_inspector::server::Command as DebugCommand;
 
 use crate::lua_api::WowLuaEnv;
 use crate::lua_server::{LuaCommand, Response as LuaResponse};
+use crate::lua_server_contract::FrameTimeAdvancePlan;
 
 use super::Message;
 use super::app::App;
@@ -104,6 +105,11 @@ impl App {
                 requested_ids,
                 respond,
             ),
+            LuaCommand::AdvanceFrameTime {
+                seconds,
+                steps,
+                respond,
+            } => self.handle_lua_advance_frame_time(seconds, steps, respond),
             LuaCommand::MouseMove { x, y, respond } => self.handle_lua_mouse_move(x, y, respond),
             LuaCommand::MouseClick { x, y, respond } => self.handle_lua_mouse_click(x, y, respond),
         }
@@ -113,6 +119,65 @@ impl App {
         let response = self.exec_lua_command(&code);
         self.flush_post_script_updates();
         let _ = respond.send(response);
+    }
+
+    fn handle_lua_advance_frame_time(
+        &mut self,
+        seconds: f64,
+        steps: u32,
+        respond: mpsc::Sender<LuaResponse>,
+    ) {
+        let plan = match FrameTimeAdvancePlan::try_new(seconds, steps) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let _ = respond.send(LuaResponse::Error(error));
+                return;
+            }
+        };
+
+        let starting_seconds = self.manual_frame_time_elapsed.unwrap_or_default();
+        self.manual_frame_time_elapsed = Some(starting_seconds);
+        {
+            let env = self.env.borrow();
+            env.state().borrow_mut().activate_manual_time();
+            env.state().borrow_mut().ensure_layout_rects();
+        }
+        let mut completed_steps = 0;
+        let mut error = None;
+        for _ in 0..plan.steps {
+            let env = self.env.borrow();
+            env.state()
+                .borrow_mut()
+                .advance_manual_time(plan.step_seconds);
+            if let Err(current_error) = env.fire_on_update(plan.step_seconds) {
+                error = Some(current_error);
+                completed_steps += 1;
+                break;
+            }
+            completed_steps += 1;
+            env.state().borrow_mut().ensure_layout_rects();
+        }
+        let cumulative_seconds = starting_seconds + plan.step_seconds * f64::from(completed_steps);
+        self.manual_frame_time_elapsed = Some(cumulative_seconds);
+        self.last_on_update_time = std::time::Instant::now();
+        self.invalidate_after_lua_mutation();
+
+        if let Some(error) = error {
+            let _ = respond.send(LuaResponse::Error(format!(
+                "AdvanceFrameTime OnUpdate failed after {completed_steps}/{} steps: {error}",
+                plan.steps
+            )));
+            return;
+        }
+
+        let output = serde_json::json!({
+            "mode": "manual_frame_time",
+            "advanced_seconds": plan.seconds,
+            "steps": plan.steps,
+            "step_seconds": plan.step_seconds,
+            "cumulative_seconds": cumulative_seconds,
+        });
+        let _ = respond.send(LuaResponse::Output(output.to_string()));
     }
 
     fn handle_lua_mouse_move(&mut self, x: f32, y: f32, respond: mpsc::Sender<LuaResponse>) {
@@ -422,6 +487,183 @@ mod tests {
                 ..
             } if filter == "uigroupmanager"
         ));
+    }
+
+    #[test]
+    fn advance_frame_time_owns_clock_and_applies_exact_on_update_steps() {
+        let (tx, rx) = mpsc::channel();
+        let mut app = build_test_app_with_lua_rx(rx);
+        let (freeze_respond, freeze_response_rx) = mpsc::channel();
+        tx.send(LuaCommand::AdvanceFrameTime {
+            seconds: 0.0,
+            steps: 1,
+            respond: freeze_respond,
+        })
+        .expect("clock-freeze command should queue");
+        app.process_lua_commands();
+        assert!(matches!(
+            freeze_response_rx.recv().expect("freeze should respond"),
+            crate::lua_server::Response::Output(_)
+        ));
+
+        app.env
+            .borrow()
+            .exec(
+                r#"
+                __frame_time_ticks = 0
+                __frame_time_elapsed = 0
+                __frame_time_clock_elapsed = 0
+                __frame_time_last_clock = GetTime()
+                DeterministicFrame = CreateFrame("Frame", "DeterministicFrame", UIParent)
+                DeterministicFrame:SetScript("OnUpdate", function(_, elapsed)
+                    local now = GetTime()
+                    __frame_time_ticks = __frame_time_ticks + 1
+                    __frame_time_elapsed = __frame_time_elapsed + elapsed
+                    __frame_time_clock_elapsed = __frame_time_clock_elapsed + (now - __frame_time_last_clock)
+                    __frame_time_last_clock = now
+                end)
+                "#,
+            )
+            .expect("deterministic frame fixture should load");
+        let (respond, response_rx) = mpsc::channel();
+
+        tx.send(LuaCommand::AdvanceFrameTime {
+            seconds: 0.75,
+            steps: 3,
+            respond,
+        })
+        .expect("advance-frame-time command should queue");
+        app.process_lua_commands();
+
+        let response = response_rx.recv().expect("command should respond");
+        let crate::lua_server::Response::Output(output) = response else {
+            panic!("expected successful frame-time response");
+        };
+        let payload: serde_json::Value = serde_json::from_str(&output).expect("response JSON");
+        assert_eq!(payload["mode"], "manual_frame_time");
+        assert_eq!(payload["steps"], 3);
+        assert_eq!(payload["cumulative_seconds"], 0.75);
+
+        let ticks: f64 = app
+            .env
+            .borrow()
+            .eval("return __frame_time_ticks")
+            .expect("tick count should be readable");
+        let elapsed: f64 = app
+            .env
+            .borrow()
+            .eval("return __frame_time_elapsed")
+            .expect("elapsed total should be readable");
+        let clock_elapsed: f64 = app
+            .env
+            .borrow()
+            .eval("return __frame_time_clock_elapsed")
+            .expect("GetTime delta should be readable");
+        assert_eq!(ticks, 3.0);
+        assert!((elapsed - 0.75).abs() < 1e-9);
+        assert!((clock_elapsed - 0.75).abs() < 1e-9);
+        assert_eq!(app.manual_frame_time_elapsed, Some(0.75));
+
+        let frozen_clock_before: f64 = app
+            .env
+            .borrow()
+            .eval("return GetTime()")
+            .expect("frozen GetTime should be readable");
+        app.last_on_update_time = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let timings = app.fire_on_update();
+        assert_eq!(
+            timings,
+            crate::lua_api::on_update::OnUpdateStageTimings::default()
+        );
+        let ticks_after_wall_clock: f64 = app
+            .env
+            .borrow()
+            .eval("return __frame_time_ticks")
+            .expect("tick count should remain readable");
+        assert_eq!(ticks_after_wall_clock, 3.0);
+        let frozen_clock_after: f64 = app
+            .env
+            .borrow()
+            .eval("return GetTime()")
+            .expect("frozen GetTime should remain readable");
+        assert_eq!(frozen_clock_after, frozen_clock_before);
+
+        app.flush_post_script_updates();
+        let zero_flush_ticks: f64 = app
+            .env
+            .borrow()
+            .eval("return __frame_time_ticks")
+            .expect("zero flush count should be readable");
+        let zero_flush_elapsed: f64 = app
+            .env
+            .borrow()
+            .eval("return __frame_time_elapsed")
+            .expect("zero flush elapsed should be readable");
+        let zero_flush_clock_elapsed: f64 = app
+            .env
+            .borrow()
+            .eval("return __frame_time_clock_elapsed")
+            .expect("zero flush clock delta should be readable");
+        assert_eq!(zero_flush_ticks, 4.0);
+        assert!((zero_flush_elapsed - 0.75).abs() < 1e-9);
+        assert!((zero_flush_clock_elapsed - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zero_frame_time_request_freezes_get_time_without_advancing_it() {
+        let (tx, rx) = mpsc::channel();
+        let mut app = build_test_app_with_lua_rx(rx);
+        let before: f64 = app
+            .env
+            .borrow()
+            .eval("return GetTime()")
+            .expect("wall-clock GetTime should be readable");
+        let (respond, response_rx) = mpsc::channel();
+
+        tx.send(LuaCommand::AdvanceFrameTime {
+            seconds: 0.0,
+            steps: 1,
+            respond,
+        })
+        .expect("clock-freeze command should queue");
+        app.process_lua_commands();
+
+        let response = response_rx.recv().expect("command should respond");
+        assert!(matches!(response, crate::lua_server::Response::Output(_)));
+        let after: f64 = app
+            .env
+            .borrow()
+            .eval("return GetTime()")
+            .expect("manual GetTime should be readable");
+        assert!(after >= before);
+        assert_eq!(app.manual_frame_time_elapsed, Some(0.0));
+        assert_eq!(
+            app.env.borrow().state().borrow().manual_time_seconds,
+            Some(after)
+        );
+    }
+
+    #[test]
+    fn advance_frame_time_rejects_invalid_plan_without_taking_clock_ownership() {
+        let (tx, rx) = mpsc::channel();
+        let mut app = build_test_app_with_lua_rx(rx);
+        let (respond, response_rx) = mpsc::channel();
+
+        tx.send(LuaCommand::AdvanceFrameTime {
+            seconds: -0.1,
+            steps: 1,
+            respond,
+        })
+        .expect("invalid advance-frame-time command should queue");
+        app.process_lua_commands();
+
+        let response = response_rx.recv().expect("command should respond");
+        assert!(matches!(
+            response,
+            crate::lua_server::Response::Error(message)
+                if message.contains("non-negative")
+        ));
+        assert_eq!(app.manual_frame_time_elapsed, None);
     }
 
     #[test]

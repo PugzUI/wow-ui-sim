@@ -247,7 +247,7 @@ fn update_ui_parent_position(_state: &mut rilua::vm::state::LuaState) -> rilua::
 fn get_time(state: &mut rilua::vm::state::LuaState) -> rilua::LuaResult<u32> {
     let elapsed = {
         let sim = borrow_state(state)?;
-        sim.start_time.elapsed().as_secs_f64()
+        sim.runtime_time_seconds()
     };
     state.push(rilua::Val::Num(elapsed));
     Ok(1)

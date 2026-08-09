@@ -263,7 +263,7 @@ fn start_specialization_change(state: &mut LuaState, target_index: i32) -> LuaRe
     }
 
     sim.player.pending_spec_change = Some(target_index);
-    let now = sim.start_time.elapsed().as_secs_f64();
+    let now = sim.runtime_time_seconds();
     let cast_id = sim.next_cast_id;
     sim.next_cast_id = sim.next_cast_id.wrapping_add(1);
     sim.casting = Some(CastingState {

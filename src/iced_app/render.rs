@@ -488,7 +488,7 @@ impl App {
         state: &crate::lua_api::SimState,
         font_sys: &mut WowFontSystem,
     ) {
-        let elapsed_secs = state.start_time.elapsed().as_secs_f64();
+        let elapsed_secs = state.runtime_time_seconds();
         let tooltip_data = super::tooltip::collect_tooltip_data(state);
         let mut glyph_atlas = self.glyph_atlas.borrow_mut();
         glyph_atlas.advance_generation();

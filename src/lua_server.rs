@@ -57,6 +57,13 @@ pub enum Request {
         #[serde(default)]
         requested_ids: Vec<String>,
     },
+    /// Advance OnUpdate-driven frame time by an exact duration.
+    AdvanceFrameTime {
+        /// Total frame time to advance in seconds.
+        seconds: f64,
+        /// Number of equal OnUpdate steps used for the advance.
+        steps: u32,
+    },
     /// Move the in-app mouse cursor and dispatch hover scripts.
     MouseMove {
         /// Canvas-space x coordinate
@@ -115,6 +122,11 @@ pub enum LuaCommand {
         crop: Option<String>,
         manifest: Option<String>,
         requested_ids: Vec<String>,
+        respond: mpsc::Sender<Response>,
+    },
+    AdvanceFrameTime {
+        seconds: f64,
+        steps: u32,
         respond: mpsc::Sender<Response>,
     },
     MouseMove {
@@ -346,6 +358,9 @@ fn send_app_command_request(request: Request, cmd_tx: &mpsc::Sender<LuaCommand>)
             manifest,
             requested_ids,
         ),
+        Request::AdvanceFrameTime { seconds, steps } => {
+            send_advance_frame_time_command(cmd_tx, seconds, steps)
+        }
         Request::MouseMove { x, y } => send_mouse_move_command(cmd_tx, x, y),
         Request::MouseClick { x, y } => send_mouse_click_command(cmd_tx, x, y),
     }
@@ -403,6 +418,18 @@ fn send_screenshot_command(
         crop,
         manifest,
         requested_ids,
+        respond,
+    })
+}
+
+fn send_advance_frame_time_command(
+    cmd_tx: &mpsc::Sender<LuaCommand>,
+    seconds: f64,
+    steps: u32,
+) -> Response {
+    send_command(cmd_tx, |respond| LuaCommand::AdvanceFrameTime {
+        seconds,
+        steps,
         respond,
     })
 }
@@ -466,6 +493,19 @@ pub mod client {
             Response::Tree(_) => Err("Unexpected tree".into()),
             Response::Quads(_) => Err("Unexpected quads".into()),
         }
+    }
+
+    /// Advance deterministic OnUpdate frame time in a running simulator.
+    pub fn advance_frame_time<P: AsRef<Path>>(
+        socket: P,
+        seconds: f64,
+        steps: u32,
+    ) -> Result<String, String> {
+        let response = send_request(socket, Request::AdvanceFrameTime { seconds, steps })?;
+        response_result(response, |response| match response {
+            Response::Output(s) => Some(s),
+            _ => None,
+        })
     }
 
     /// Move the in-app mouse cursor.
@@ -639,6 +679,58 @@ mod tests {
                 verbose: true
             } if filter == "uigroupmanager"
         ));
+    }
+
+    #[test]
+    fn parse_request_accepts_advance_frame_time_payload() {
+        let request = serde_json::to_string(&Request::AdvanceFrameTime {
+            seconds: 0.75,
+            steps: 3,
+        })
+        .unwrap();
+
+        let parsed = parse_request(&request).expect("advance-frame-time request should parse");
+
+        assert!(matches!(
+            parsed,
+            Request::AdvanceFrameTime {
+                seconds,
+                steps: 3
+            } if (seconds - 0.75).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn handle_request_dispatches_advance_frame_time_commands() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let response_thread = thread::spawn(move || {
+            let command = cmd_rx.recv().expect("command should be sent");
+            match command {
+                LuaCommand::AdvanceFrameTime {
+                    seconds,
+                    steps,
+                    respond,
+                } => {
+                    assert!((seconds - 0.75).abs() < f64::EPSILON);
+                    assert_eq!(steps, 3);
+                    respond
+                        .send(Response::Output("advanced".to_string()))
+                        .unwrap();
+                }
+                _ => panic!("expected advance-frame-time command"),
+            }
+        });
+
+        let response = handle_request(
+            Request::AdvanceFrameTime {
+                seconds: 0.75,
+                steps: 3,
+            },
+            &cmd_tx,
+        );
+
+        response_thread.join().unwrap();
+        assert!(matches!(response, Response::Output(body) if body == "advanced"));
     }
 
     #[test]

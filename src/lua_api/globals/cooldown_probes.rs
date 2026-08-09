@@ -52,7 +52,7 @@ fn get_spell_cooldown(state: &mut LuaState) -> LuaResult<u32> {
     let spell_id = stack_u32(state, 1).unwrap_or(0);
     let (start, duration) = {
         let sim = borrow_state(state)?;
-        let now = sim.start_time.elapsed().as_secs_f64();
+        let now = sim.runtime_time_seconds();
         spell_cooldown_times(&sim, spell_id, now)
     };
     push_cooldown_quad(state, start, duration);
@@ -68,7 +68,7 @@ fn get_action_cooldown(state: &mut LuaState) -> LuaResult<u32> {
         let sim = borrow_state(state)?;
         match sim.action_bars.get(&slot).copied() {
             Some(spell_id) => {
-                let now = sim.start_time.elapsed().as_secs_f64();
+                let now = sim.runtime_time_seconds();
                 spell_cooldown_times(&sim, spell_id, now)
             }
             None => (0.0, 0.0),

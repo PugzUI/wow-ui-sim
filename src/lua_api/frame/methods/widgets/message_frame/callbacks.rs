@@ -94,7 +94,7 @@ pub(super) fn reset_all_fade_times(state: &mut LuaState) -> LuaResult<u32> {
     let id = frame_id_from_stack(state, 1)?;
     {
         let mut sim = borrow_state_mut(state)?;
-        let now = sim.start_time.elapsed().as_secs_f64();
+        let now = sim.runtime_time_seconds();
         sim.message_frames
             .entry(id)
             .or_default()
@@ -111,7 +111,7 @@ pub(super) fn reset_message_fade_by_id(state: &mut LuaState) -> LuaResult<u32> {
     };
     let changed = {
         let mut sim = borrow_state_mut(state)?;
-        let now = sim.start_time.elapsed().as_secs_f64();
+        let now = sim.runtime_time_seconds();
         let Some(data) = sim.message_frames.get_mut(&id) else {
             return Ok(0);
         };
