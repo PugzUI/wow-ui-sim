@@ -70,6 +70,39 @@ pub(crate) fn build_screenshot_like_batch(
     )
 }
 
+pub(crate) fn build_screenshot_like_batch_with_glyph_atlas(
+    env: &WowLuaEnv,
+    width: u32,
+    height: u32,
+    filter: Option<&str>,
+) -> (QuadBatch, Vec<u8>, u32) {
+    let font_system = make_font_system();
+    env.set_font_system(Rc::clone(&font_system));
+    env.set_screen_size(width as f32, height as f32);
+    wow_ui_sim::startup::run_extra_update_ticks(env, 3);
+
+    let mut glyph_atlas = GlyphAtlas::new();
+    let mut font_system = font_system.borrow_mut();
+    let buckets = {
+        let mut state = env.state().borrow_mut();
+        state.ensure_layout_rects();
+        wow_ui_sim::iced_app::tooltip::update_tooltip_sizes(&mut state, &mut font_system);
+        let _ = state.get_strata_buckets();
+        state.strata_buckets.as_ref().unwrap().clone()
+    };
+    let state = env.state().borrow();
+    let tooltip_data = wow_ui_sim::iced_app::tooltip::collect_tooltip_data(&state);
+    let batch = build_quad_batch_for_registry(
+        RegistryQuadBatchParams::new(&state.widgets, (width as f32, height as f32), &buckets)
+            .root_name(filter)
+            .text_ctx(Some((&mut font_system, &mut glyph_atlas)))
+            .message_frames(Some(&state.message_frames))
+            .tooltip_data(Some(&tooltip_data)),
+    );
+    let (pixels, size, _) = glyph_atlas.texture_data();
+    (batch, pixels.to_vec(), size)
+}
+
 pub(crate) fn is_descendant_of(
     widgets: &WidgetRegistry,
     mut frame_id: u64,
