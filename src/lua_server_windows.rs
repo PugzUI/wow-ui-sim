@@ -29,6 +29,10 @@ pub enum Request {
         filter: Option<String>,
         verbose: bool,
     },
+    AdvanceFrameTime {
+        seconds: f64,
+        steps: u32,
+    },
     Screenshot {
         output: String,
         width: u32,
@@ -79,6 +83,11 @@ pub enum LuaCommand {
         requested_ids: Vec<String>,
         respond: mpsc::Sender<Response>,
     },
+    AdvanceFrameTime {
+        seconds: f64,
+        steps: u32,
+        respond: mpsc::Sender<Response>,
+    },
     MouseMove {
         x: f32,
         y: f32,
@@ -105,6 +114,14 @@ pub mod client {
     use std::path::{Path, PathBuf};
 
     pub fn exec<P: AsRef<Path>>(_socket: P, _code: &str) -> Result<String, String> {
+        Err(UNSUPPORTED.into())
+    }
+
+    pub fn advance_frame_time<P: AsRef<Path>>(
+        _socket: P,
+        _seconds: f64,
+        _steps: u32,
+    ) -> Result<String, String> {
         Err(UNSUPPORTED.into())
     }
 

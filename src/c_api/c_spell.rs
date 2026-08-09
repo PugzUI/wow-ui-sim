@@ -397,7 +397,7 @@ fn get_spell_cooldown(state: &mut LuaState) -> LuaResult<u32> {
     let spell_id = u32::from_stack(state, 1)?;
     let (start, duration) = {
         let sim = borrow_state(state)?;
-        let now = sim.start_time.elapsed().as_secs_f64();
+        let now = sim.runtime_time_seconds();
         spell_cooldown_times(&sim, spell_id, now)
     };
     let is_active = duration > 0.0;

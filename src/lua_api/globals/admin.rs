@@ -477,7 +477,7 @@ fn set_casting(state: &mut LuaState) -> LuaResult<u32> {
     let icon_path = String::from_stack(state, 3)?;
     let duration = f64::from_stack(state, 4)?;
     let mut st = borrow_state_mut(state)?;
-    let now = st.start_time.elapsed().as_secs_f64();
+    let now = st.runtime_time_seconds();
     let cast_id = st.next_cast_id;
     st.next_cast_id += 1;
     st.casting = Some(CastingState {
@@ -500,7 +500,7 @@ fn stop_casting(state: &mut LuaState) -> LuaResult<u32> {
 fn set_gcd(state: &mut LuaState) -> LuaResult<u32> {
     let duration = f64::from_stack(state, 1)?;
     let mut st = borrow_state_mut(state)?;
-    let now = st.start_time.elapsed().as_secs_f64();
+    let now = st.runtime_time_seconds();
     st.gcd = Some((now, duration));
     Ok(0)
 }
@@ -509,7 +509,7 @@ fn set_spell_cooldown(state: &mut LuaState) -> LuaResult<u32> {
     let spell_id = u32::from_stack(state, 1)?;
     let duration = f64::from_stack(state, 2)?;
     let mut st = borrow_state_mut(state)?;
-    let now = st.start_time.elapsed().as_secs_f64();
+    let now = st.runtime_time_seconds();
     st.spell_cooldowns.insert(
         spell_id,
         SpellCooldownState {
@@ -595,7 +595,7 @@ pub(super) fn build_admin_aura(
     dispel_type: Option<String>,
 ) -> AuraInfo {
     let expiration_time = if duration > 0.0 {
-        st.start_time.elapsed().as_secs_f64() + duration
+        st.runtime_time_seconds() + duration
     } else {
         0.0
     };

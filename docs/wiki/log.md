@@ -1435,3 +1435,7 @@ Updated `systems/addon-loading.md` after live-client probes showed `[Bootstrap]`
 ## [2026-08-09] update | Native Visualizer coordinate contract v2
 
 Updated `design/scaling-coordinates.md` after proving that native Visualizer manifest rectangles were pre-raster renderer units mislabeled as physical pixels. Added explicit physical, WoW-screen, renderer, local-frame, and parent-anchor spaces; pinned the 2560 × 1440 / 0.53 API values; documented the single renderer-to-physical transform; and defined dual manifest geometry with flat compatibility fields now carrying real PNG pixels. The renderer and manifest share `src/render/coordinates.rs`, preventing caller-specific conversion rules.
+
+## [2026-08-09] update | Deterministic native frame-time IPC
+
+Added bounded `AdvanceFrameTime` IPC for native Visualizer behavior evidence. The first request switches the running GUI to manual frame-time ownership, freezes the WoW game clock, pauses wall-clock OnUpdate/timer/party/casting progression, advances both `GetTime()` and OnUpdate by an exact duration over explicit equal steps, and preserves zero-elapsed Lua mutation flushes. Gameplay rendering and time consumers now share that clock, while process logging/profiling retain separate monotonic wall time. A zero-second request freezes time before fixture activation, making Start/Main/Finish and custom WeakAuras animation captures reproducible without sleeps.

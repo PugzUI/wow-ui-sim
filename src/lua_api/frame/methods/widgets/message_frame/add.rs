@@ -39,7 +39,7 @@ pub(super) fn backfill_message(state: &mut LuaState) -> LuaResult<u32> {
 
     let mut sim = borrow_state_mut(state)?;
     log_message_sim(&sim, id, &text);
-    let timestamp = sim.start_time.elapsed().as_secs_f64();
+    let timestamp = sim.runtime_time_seconds();
     let data = sim.message_frames.entry(id).or_default();
     data.messages.insert(
         0,
@@ -88,7 +88,7 @@ pub(super) fn add_message_core_from_stack(state: &mut LuaState, id: u64, log: bo
     if log {
         log_message_sim(&sim, id, &text);
     }
-    let timestamp = sim.start_time.elapsed().as_secs_f64();
+    let timestamp = sim.runtime_time_seconds();
     let data = sim.message_frames.entry(id).or_default();
     insert_message(data, text, r, g, b, a, message_id, timestamp);
     truncate_messages(data);

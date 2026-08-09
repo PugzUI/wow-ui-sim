@@ -171,6 +171,9 @@ pub struct App {
     pub(crate) frames_panel_collapsed: bool,
     /// Last time OnUpdate handlers were fired (for elapsed calculation).
     pub(crate) last_on_update_time: std::time::Instant,
+    /// Cumulative deterministic OnUpdate time advanced through IPC. `None`
+    /// keeps normal wall-clock frame progression active.
+    pub(crate) manual_frame_time_elapsed: Option<f64>,
     /// SavedVariables manager for persisting addon data on exit.
     pub(crate) saved_vars: Option<SavedVariablesManager>,
     /// Lua code to execute after first frame (from --exec-lua). Bool is
@@ -279,6 +282,7 @@ macro_rules! app_from_initial_state {
             inspector_state: InspectorState::default(),
             frames_panel_collapsed: true,
             last_on_update_time: $now,
+            manual_frame_time_elapsed: None,
             saved_vars: $init.saved_vars,
             pending_exec_lua: INIT_EXEC_LUA.with(|cell| cell.borrow_mut().take()),
             selected_xp_level: $selections.xp_level,
@@ -626,7 +630,7 @@ fn parse_fast_tick_ms(value: &str) -> Option<u64> {
 
 /// Check if any GCD, spell, or visible Cooldown widgets are still active.
 fn has_active_cooldowns(state: &crate::lua_api::SimState) -> bool {
-    let now = state.start_time.elapsed().as_secs_f64();
+    let now = state.runtime_time_seconds();
     if let Some((start, dur)) = state.gcd {
         if now < start + dur {
             return true;
@@ -643,7 +647,7 @@ fn has_active_cooldowns(state: &crate::lua_api::SimState) -> bool {
 }
 
 pub(super) fn active_cooldown_widget_ids(state: &crate::lua_api::SimState) -> Vec<u64> {
-    let now = state.start_time.elapsed().as_secs_f64();
+    let now = state.runtime_time_seconds();
     state
         .widgets
         .iter_ids()

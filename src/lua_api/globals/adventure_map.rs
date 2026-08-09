@@ -90,7 +90,7 @@ fn get_adventure_map_texture_kit(state: &mut LuaState) -> LuaResult<u32> {
 
 fn close(state: &mut LuaState) -> LuaResult<u32> {
     let mut sim = borrow_state_mut(state)?;
-    let elapsed = sim.start_time.elapsed().as_secs_f64();
+    let elapsed = sim.runtime_time_seconds();
     sim.adventure_map.last_closed = Some(elapsed);
     Ok(0)
 }

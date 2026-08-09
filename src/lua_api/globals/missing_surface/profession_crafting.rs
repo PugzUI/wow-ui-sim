@@ -98,7 +98,7 @@ fn start_crafting_cast(state: &mut LuaState, plan: &CraftPlan) {
     let Ok(mut sim) = borrow_state_mut(state) else {
         return;
     };
-    let now = sim.start_time.elapsed().as_secs_f64();
+    let now = sim.runtime_time_seconds();
     let cast_id = sim.next_cast_id;
     sim.next_cast_id = sim.next_cast_id.wrapping_add(1);
     sim.casting = Some(CastingState {
