@@ -576,7 +576,7 @@ fn texture_request_priority(path: &str) -> (u8, u8) {
     (u8::from(!is_world_map), u8::from(is_crop))
 }
 
-fn runtime_screen_size(window_size: iced::Size, visualizer: bool) -> iced::Size {
+pub(super) fn runtime_screen_size(window_size: iced::Size, visualizer: bool) -> iced::Size {
     if visualizer {
         iced::Size::new(
             crate::render::texture::VISUALIZER_WIDTH,
