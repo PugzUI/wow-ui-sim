@@ -102,6 +102,8 @@ pub struct GlyphAtlas {
     shape_cache_generation: u64,
     /// Unique path used to register this atlas in the GpuTextureAtlas.
     atlas_path: String,
+    /// Monotonic content revision for independent GPU consumers.
+    revision: u64,
 }
 
 impl std::fmt::Debug for GlyphAtlas {
@@ -131,12 +133,18 @@ impl GlyphAtlas {
             shape_cache: HashMap::new(),
             shape_cache_generation: 0,
             atlas_path: "__glyph_atlas__".to_string(),
+            revision: 0,
         }
     }
 
     /// The unique texture path used to identify this atlas in the GPU texture system.
     pub fn atlas_path(&self) -> &str {
         &self.atlas_path
+    }
+
+    /// Current content revision for independent GPU consumers.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Whether the atlas has new data that needs uploading.
@@ -222,6 +230,7 @@ impl GlyphAtlas {
         );
         self.entries.insert(cache_key, entry);
         self.dirty = true;
+        self.revision = self.revision.wrapping_add(1);
         entry
     }
 

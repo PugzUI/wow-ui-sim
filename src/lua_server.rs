@@ -57,6 +57,17 @@ pub enum Request {
         #[serde(default)]
         requested_ids: Vec<String>,
     },
+    /// Render the current native stage into a reduced interactive frame.
+    StreamFrame {
+        /// Output JPEG or WebP path.
+        output: String,
+        /// Encoded stream width.
+        width: u32,
+        /// Encoded stream height.
+        height: u32,
+        /// Lossy JPEG or WebP quality from 1 to 100.
+        quality: f32,
+    },
     /// Advance OnUpdate-driven frame time by an exact duration.
     AdvanceFrameTime {
         /// Total frame time to advance in seconds.
@@ -122,6 +133,13 @@ pub enum LuaCommand {
         crop: Option<String>,
         manifest: Option<String>,
         requested_ids: Vec<String>,
+        respond: mpsc::Sender<Response>,
+    },
+    StreamFrame {
+        output: String,
+        width: u32,
+        height: u32,
+        quality: f32,
         respond: mpsc::Sender<Response>,
     },
     AdvanceFrameTime {
@@ -358,6 +376,12 @@ fn send_app_command_request(request: Request, cmd_tx: &mpsc::Sender<LuaCommand>)
             manifest,
             requested_ids,
         ),
+        Request::StreamFrame {
+            output,
+            width,
+            height,
+            quality,
+        } => send_stream_frame_command(cmd_tx, output, width, height, quality),
         Request::AdvanceFrameTime { seconds, steps } => {
             send_advance_frame_time_command(cmd_tx, seconds, steps)
         }
@@ -418,6 +442,22 @@ fn send_screenshot_command(
         crop,
         manifest,
         requested_ids,
+        respond,
+    })
+}
+
+fn send_stream_frame_command(
+    cmd_tx: &mpsc::Sender<LuaCommand>,
+    output: String,
+    width: u32,
+    height: u32,
+    quality: f32,
+) -> Response {
+    send_command(cmd_tx, |respond| LuaCommand::StreamFrame {
+        output,
+        width,
+        height,
+        quality,
         respond,
     })
 }
@@ -493,6 +533,29 @@ pub mod client {
             Response::Tree(_) => Err("Unexpected tree".into()),
             Response::Quads(_) => Err("Unexpected quads".into()),
         }
+    }
+
+    /// Render the current native stage into a reduced interactive frame.
+    pub fn stream_frame<P: AsRef<Path>>(
+        socket: P,
+        output: &str,
+        width: u32,
+        height: u32,
+        quality: f32,
+    ) -> Result<String, String> {
+        let response = send_request(
+            socket,
+            Request::StreamFrame {
+                output: output.to_string(),
+                width,
+                height,
+                quality,
+            },
+        )?;
+        response_result(response, |response| match response {
+            Response::Output(s) => Some(s),
+            _ => None,
+        })
     }
 
     /// Advance deterministic OnUpdate frame time in a running simulator.
@@ -679,6 +742,67 @@ mod tests {
                 verbose: true
             } if filter == "uigroupmanager"
         ));
+    }
+
+    #[test]
+    fn parse_request_accepts_stream_frame_payload() {
+        let request = serde_json::to_string(&Request::StreamFrame {
+            output: "/tmp/frame.jpg".to_string(),
+            width: 960,
+            height: 540,
+            quality: 70.0,
+        })
+        .unwrap();
+
+        let parsed = parse_request(&request).expect("stream-frame request should parse");
+
+        assert!(matches!(
+            parsed,
+            Request::StreamFrame {
+                output,
+                width: 960,
+                height: 540,
+                quality
+            } if output == "/tmp/frame.jpg" && (quality - 70.0).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn handle_request_dispatches_stream_frame_commands() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let response_thread = thread::spawn(move || {
+            let command = cmd_rx.recv().expect("command should be sent");
+            match command {
+                LuaCommand::StreamFrame {
+                    output,
+                    width,
+                    height,
+                    quality,
+                    respond,
+                } => {
+                    assert_eq!(output, "/tmp/frame.jpg");
+                    assert_eq!((width, height), (960, 540));
+                    assert!((quality - 70.0).abs() < f32::EPSILON);
+                    respond
+                        .send(Response::Output("streamed".to_string()))
+                        .expect("response should be accepted");
+                }
+                _ => panic!("unexpected command"),
+            }
+        });
+
+        let response = handle_request(
+            Request::StreamFrame {
+                output: "/tmp/frame.jpg".to_string(),
+                width: 960,
+                height: 540,
+                quality: 70.0,
+            },
+            &cmd_tx,
+        );
+
+        response_thread.join().unwrap();
+        assert!(matches!(response, Response::Output(output) if output == "streamed"));
     }
 
     #[test]

@@ -6,11 +6,24 @@ use std::path::Path;
 use crate::iced_app::frame_collect::SCALPEL_VISUALIZER_ROOT;
 use crate::lua_api::WowLuaEnv;
 use crate::lua_server::Response as LuaResponse;
-use crate::render::GlyphAtlas;
-use crate::render::headless::render_to_image;
 
 use super::app::App;
 const CROP_FORMAT_EXAMPLE: &str = "700x150+400+650";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StreamFrameResult {
+    pub output: String,
+    pub stage_width: u32,
+    pub stage_height: u32,
+    pub width: u32,
+    pub height: u32,
+    pub render_ms: f64,
+    pub encode_ms: f64,
+    pub total_ms: f64,
+    pub sim_time: f64,
+    pub cached_strata: bool,
+    pub dirty_strata_mask: u16,
+}
 
 impl App {
     /// Render a screenshot from the live app state and save to disk.
@@ -29,10 +42,22 @@ impl App {
             return LuaResponse::Error(error);
         }
         let output_path = Path::new(output).to_path_buf();
-        let (batch, mut glyph_atlas) = self.build_screenshot_batch(width, height, filter);
-        let glyph_data = glyph_atlas_data(&mut glyph_atlas);
+        let batch = self.build_screenshot_batch(width, height, filter);
         let mut tex_mgr = self.texture_manager.borrow_mut();
-        let img = render_to_image(&batch, &mut tex_mgr, width, height, glyph_data);
+        let mut renderer = self.headless_renderer.borrow_mut();
+        let renderer = renderer.get_or_insert_with(crate::render::headless::HeadlessRenderer::new);
+        let (glyph_upload, glyph_size, glyph_revision) = self.glyph_upload_for(renderer);
+        let glyph_data = glyph_upload
+            .as_ref()
+            .map(|data| (data.as_slice(), glyph_size));
+        let img = renderer.render_to_image_with_glyph_revision(
+            &batch,
+            &mut tex_mgr,
+            width,
+            height,
+            glyph_data,
+            glyph_revision,
+        );
         let img = match maybe_crop_image(img, crop) {
             Ok(img) => img,
             Err(e) => return LuaResponse::Error(e),
@@ -62,6 +87,88 @@ impl App {
         ))
     }
 
+    /// Render the current native stage into a reduced interactive frame.
+    ///
+    /// The stage remains at its authoritative physical size; only the output
+    /// target is reduced. Exact screenshots and manifests continue to use
+    /// `render_screenshot` at 2560x1440.
+    pub(crate) fn render_stream_frame(
+        &mut self,
+        output: &str,
+        width: u32,
+        height: u32,
+        quality: f32,
+    ) -> Result<StreamFrameResult, String> {
+        let started = std::time::Instant::now();
+        let stage = self.screen_size.get();
+        let stage_width = stage.width.round().max(1.0) as u32;
+        let stage_height = stage.height.round().max(1.0) as u32;
+        let dirty_strata_mask = self.strata_dirty.get();
+        if dirty_strata_mask != 0 {
+            let _ = self.get_or_rebuild_quads(stage);
+        }
+        let cached_strata = self.cached_strata_quads.borrow().clone();
+        let cached_strata_ready = cached_strata.iter().any(Option::is_some);
+        let fallback_batch = (!cached_strata_ready)
+            .then(|| self.build_screenshot_batch(stage_width, stage_height, None));
+        let render_started = std::time::Instant::now();
+        let image = {
+            let mut tex_mgr = self.texture_manager.borrow_mut();
+            let mut renderer = self.headless_renderer.borrow_mut();
+            let renderer =
+                renderer.get_or_insert_with(crate::render::headless::HeadlessRenderer::new);
+            let (glyph_upload, glyph_size, glyph_revision) = self.glyph_upload_for(renderer);
+            let glyph_data = glyph_upload
+                .as_ref()
+                .map(|data| (data.as_slice(), glyph_size));
+            if cached_strata_ready {
+                renderer.render_cached_strata_to_image(
+                    &cached_strata,
+                    &mut tex_mgr,
+                    stage_width,
+                    stage_height,
+                    width,
+                    height,
+                    glyph_data,
+                    glyph_revision,
+                )
+            } else {
+                renderer.render_scaled_to_image(
+                    fallback_batch.as_ref().expect("fallback batch built"),
+                    &mut tex_mgr,
+                    stage_width,
+                    stage_height,
+                    width,
+                    height,
+                    glyph_data,
+                )
+            }
+        };
+        let render_ms = render_started.elapsed().as_secs_f64() * 1000.0;
+        let encode_started = std::time::Instant::now();
+        let output_path = Path::new(output);
+        save_stream_frame(&image, output_path, quality)?;
+        let encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
+        let sim_time = self
+            .env
+            .borrow()
+            .eval::<f64>("return GetTime()")
+            .unwrap_or_default();
+        Ok(StreamFrameResult {
+            output: output_path.to_string_lossy().into_owned(),
+            stage_width,
+            stage_height,
+            width,
+            height,
+            render_ms,
+            encode_ms,
+            total_ms: started.elapsed().as_secs_f64() * 1000.0,
+            sim_time,
+            cached_strata: cached_strata_ready,
+            dirty_strata_mask,
+        })
+    }
+
     pub(super) fn configure_screenshot_runtime(
         &mut self,
         width: u32,
@@ -83,41 +190,50 @@ impl App {
         Ok(())
     }
 
+    fn glyph_upload_for(
+        &self,
+        renderer: &crate::render::headless::HeadlessRenderer,
+    ) -> (Option<Vec<u8>>, u32, u64) {
+        let glyph_atlas = self.glyph_atlas.borrow();
+        let revision = glyph_atlas.revision();
+        let (data, size, _) = glyph_atlas.texture_data();
+        let upload = renderer.needs_glyph_upload(revision).then(|| data.to_vec());
+        (upload, size, revision)
+    }
+
     fn build_screenshot_batch(
         &self,
         width: u32,
         height: u32,
         filter: Option<&str>,
-    ) -> (crate::render::QuadBatch, GlyphAtlas) {
-        let mut glyph_atlas = GlyphAtlas::new();
-        let batch = {
-            let env = self.env.borrow();
-            let mut fs = self.font_system.borrow_mut();
-            let buckets = {
-                let mut state = env.state().borrow_mut();
-                super::tooltip::update_tooltip_sizes(&mut state, &mut fs);
-                state.ensure_layout_rects();
-                let _ = state.get_strata_buckets();
-                state.strata_buckets.as_ref().unwrap().clone()
-            };
-            let state = env.state().borrow();
-            let tooltip_data = super::tooltip::collect_tooltip_data(&state);
-            super::build_quad_batch_for_registry_with_quest_blobs(
-                super::RegistryQuadBatchParams::new(
-                    &state.widgets,
-                    (width as f32, height as f32),
-                    &buckets,
-                )
-                .root_name(filter)
-                .pressed_frame(self.pressed_frame)
-                .hovered_frame(self.hovered_frame)
-                .text_ctx(Some((&mut fs, &mut glyph_atlas)))
-                .message_frames(Some(&state.message_frames))
-                .tooltip_data(Some(&tooltip_data))
-                .quest_blobs(Some(&state.quest_blobs)),
-            )
+    ) -> crate::render::QuadBatch {
+        let mut glyph_atlas = self.glyph_atlas.borrow_mut();
+        glyph_atlas.advance_generation();
+        let env = self.env.borrow();
+        let mut fs = self.font_system.borrow_mut();
+        let buckets = {
+            let mut state = env.state().borrow_mut();
+            super::tooltip::update_tooltip_sizes(&mut state, &mut fs);
+            state.ensure_layout_rects();
+            let _ = state.get_strata_buckets();
+            state.strata_buckets.as_ref().unwrap().clone()
         };
-        (batch, glyph_atlas)
+        let state = env.state().borrow();
+        let tooltip_data = super::tooltip::collect_tooltip_data(&state);
+        super::build_quad_batch_for_registry_with_quest_blobs(
+            super::RegistryQuadBatchParams::new(
+                &state.widgets,
+                (width as f32, height as f32),
+                &buckets,
+            )
+            .root_name(filter)
+            .pressed_frame(self.pressed_frame)
+            .hovered_frame(self.hovered_frame)
+            .text_ctx(Some((&mut fs, &mut glyph_atlas)))
+            .message_frames(Some(&state.message_frames))
+            .tooltip_data(Some(&tooltip_data))
+            .quest_blobs(Some(&state.quest_blobs)),
+        )
     }
 }
 
@@ -490,15 +606,6 @@ fn is_elvui_frame_name(name: &str) -> bool {
     name.starts_with("ElvUI") || name.starts_with("ElvUF_") || name.starts_with("ElvAB_")
 }
 
-fn glyph_atlas_data(glyph_atlas: &mut GlyphAtlas) -> Option<(&[u8], u32)> {
-    if glyph_atlas.is_dirty() {
-        let (data, size, _) = glyph_atlas.texture_data();
-        Some((data, size))
-    } else {
-        None
-    }
-}
-
 fn maybe_crop_image(img: image::RgbaImage, crop: Option<&str>) -> Result<image::RgbaImage, String> {
     match crop {
         Some(crop_str) => apply_crop(img, crop_str),
@@ -562,6 +669,41 @@ fn apply_crop(img: image::RgbaImage, crop_str: &str) -> Result<image::RgbaImage,
         ));
     }
     Ok(img.view(cx, cy, cw, ch).to_image())
+}
+
+fn save_stream_frame(image: &image::RgbaImage, output: &Path, quality: f32) -> Result<(), String> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let temporary = output.with_extension("stream.tmp");
+    match output.extension().and_then(|value| value.to_str()) {
+        Some("jpg" | "jpeg") => {
+            let rgb = image::DynamicImage::ImageRgba8(image.clone()).to_rgb8();
+            let file = std::fs::File::create(&temporary).map_err(|error| error.to_string())?;
+            let mut writer = std::io::BufWriter::new(file);
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut writer,
+                quality.round().clamp(1.0, 100.0) as u8,
+            );
+            encoder
+                .encode(
+                    rgb.as_raw(),
+                    rgb.width(),
+                    rgb.height(),
+                    image::ExtendedColorType::Rgb8,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        _ => {
+            let encoder = webp::Encoder::from_rgba(image.as_raw(), image.width(), image.height());
+            let encoded = encoder.encode(quality);
+            std::fs::write(&temporary, &*encoded).map_err(|error| error.to_string())?;
+        }
+    }
+    if output.exists() {
+        std::fs::remove_file(output).map_err(|error| error.to_string())?;
+    }
+    std::fs::rename(&temporary, output).map_err(|error| error.to_string())
 }
 
 /// Save screenshots as WebP for streaming or lossless PNG for capture.
