@@ -20,7 +20,18 @@ pub(super) fn settings() -> window::Settings {
 }
 
 pub(super) fn initial_window_size() -> Size {
-    Size::new(1024.0, 768.0)
+    initial_window_size_for_mode(crate::render::texture::visualizer_mode())
+}
+
+fn initial_window_size_for_mode(visualizer: bool) -> Size {
+    if visualizer {
+        Size::new(
+            crate::render::texture::VISUALIZER_WIDTH,
+            crate::render::texture::VISUALIZER_HEIGHT,
+        )
+    } else {
+        Size::new(1024.0, 768.0)
+    }
 }
 
 #[cfg(test)]
@@ -30,6 +41,18 @@ mod tests {
     #[test]
     fn settings_include_runtime_icon() {
         assert!(settings().icon.is_some());
+    }
+
+    #[test]
+    fn visualizer_window_uses_fixed_native_stage() {
+        assert_eq!(
+            initial_window_size_for_mode(true),
+            Size::new(2560.0, 1440.0)
+        );
+        assert_eq!(
+            initial_window_size_for_mode(false),
+            Size::new(1024.0, 768.0)
+        );
     }
 
     #[cfg(target_os = "linux")]

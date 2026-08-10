@@ -64,9 +64,12 @@ pub(super) fn dispatch_screenshot(dispatch: CommandDispatch) {
         output,
         width,
         height,
+        ui_scale,
         filter,
         crop,
         dump_tree,
+        manifest,
+        requested_ids,
     }) = dispatch.command
     else {
         unreachable!("dispatch_screenshot only fires for Commands::Screenshot");
@@ -78,12 +81,15 @@ pub(super) fn dispatch_screenshot(dispatch: CommandDispatch) {
             output,
             width,
             height,
+            ui_scale,
             filter,
             crop,
             delay: dispatch.delay,
             exec_lua: dispatch.exec_lua.as_deref(),
             exec_lua_secure: dispatch.exec_lua_secure,
             dump_tree,
+            manifest,
+            requested_ids,
         },
     );
 }
@@ -240,12 +246,15 @@ pub(super) struct ScreenshotCommand<'a> {
     pub(super) output: PathBuf,
     pub(super) width: u32,
     pub(super) height: u32,
+    pub(super) ui_scale: Option<f32>,
     pub(super) filter: Option<String>,
     pub(super) crop: Option<String>,
     pub(super) delay: Option<u64>,
     pub(super) exec_lua: Option<&'a str>,
     pub(super) exec_lua_secure: bool,
     pub(super) dump_tree: Option<Option<String>>,
+    pub(super) manifest: Option<PathBuf>,
+    pub(super) requested_ids: Vec<String>,
 }
 
 pub(super) fn run_screenshot(
@@ -268,8 +277,19 @@ pub(super) fn run_screenshot(
 
     let img = render_screenshot_image(&batch, &glyph_atlas, command.width, command.height);
     let img = apply_optional_crop(img, command.crop.as_deref());
-    let output = command.output.with_extension("webp");
+    let output = command.output.clone();
     save_screenshot(&img, &output);
+    if let Some(path) = command.manifest.as_deref() {
+        wow_ui_sim::iced_app::write_visualizer_manifest(
+            env,
+            &path.to_string_lossy(),
+            command.width,
+            command.height,
+            wow_ui_sim::render::texture::ui_scale(),
+            command.filter.as_deref(),
+            &command.requested_ids,
+        );
+    }
     eprintln!(
         "Saved {}x{} screenshot to {}",
         img.width(),
@@ -280,6 +300,12 @@ pub(super) fn run_screenshot(
 
 fn prepare_screenshot_env(env: &WowLuaEnv, command: &ScreenshotCommand<'_>) {
     settle_headless_startup(env);
+    if let Some(scale) = command.ui_scale
+        && let Err(error) = env.set_ui_scale(scale)
+    {
+        eprintln!("[ui-scale] error: {error}");
+        std::process::exit(2);
+    }
     env.set_screen_size(command.width as f32, command.height as f32);
     wow_ui_sim::debug_helpers::debug_show_game_menu(env);
     run_screenshot_exec_lua(env, command);
@@ -425,9 +451,16 @@ fn apply_crop(img: image::RgbaImage, crop_str: &str) -> image::RgbaImage {
 }
 
 fn save_screenshot(img: &image::RgbaImage, output: &Path) {
+    if output.extension().and_then(|value| value.to_str()) == Some("png") {
+        if let Err(e) = img.save_with_format(output, image::ImageFormat::Png) {
+            eprintln!("Failed to save PNG: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
     let output = output.with_extension("webp");
     let encoder = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height());
-    let mem = encoder.encode(15.0);
+    let mem = encoder.encode(65.0);
     if let Err(e) = std::fs::write(&output, &*mem) {
         eprintln!("Failed to save WebP: {}", e);
         std::process::exit(1);

@@ -3,9 +3,34 @@
 use iced::Rectangle;
 use iced::widget::canvas::{self, Frame};
 use iced::widget::image::Handle as ImageHandle;
+use std::sync::OnceLock;
 
-/// UI scale factor (1.0 = pixel-perfect, no scaling).
+/// Default WoW UI scale for non-Visualizer simulator surfaces.
 pub const UI_SCALE: f32 = 1.0;
+
+/// Aura Visualizer physical stage width.
+pub const VISUALIZER_WIDTH: f32 = 2560.0;
+/// Aura Visualizer physical stage height.
+pub const VISUALIZER_HEIGHT: f32 = 1440.0;
+/// Aura Visualizer scale for its fixed 2560x1440 stage.
+pub const VISUALIZER_UI_SCALE: f32 = 0.53;
+
+pub fn visualizer_mode() -> bool {
+    std::env::var("WOW_SIM_VISUALIZER")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+pub fn ui_scale() -> f32 {
+    static ACTIVE_SCALE: OnceLock<f32> = OnceLock::new();
+    *ACTIVE_SCALE.get_or_init(|| {
+        if visualizer_mode() {
+            VISUALIZER_UI_SCALE
+        } else {
+            UI_SCALE
+        }
+    })
+}
 
 /// Draw a texture scaled to fit the target rectangle.
 pub fn draw_scaled_texture(frame: &mut Frame, bounds: Rectangle, handle: &ImageHandle, alpha: f32) {
@@ -113,8 +138,8 @@ fn draw_horizontal_slice_parts(frame: &mut Frame, texture: &HorizontalSliceTextu
         texture.middle_handle,
         texture.right_handle,
     ) {
-        let dst_left_cap = texture.left_cap_width * UI_SCALE;
-        let dst_right_cap = texture.right_cap_width * UI_SCALE;
+        let dst_left_cap = texture.left_cap_width * ui_scale();
+        let dst_right_cap = texture.right_cap_width * ui_scale();
         let dst_middle = texture.bounds.width - dst_left_cap - dst_right_cap;
 
         if dst_middle >= 0.0 {

@@ -97,12 +97,21 @@ enum Commands {
         width: u32,
         #[arg(long, default_value_t = 1200)]
         height: u32,
+        /// Apply an explicit UIParent scale before layout and capture.
+        #[arg(long)]
+        ui_scale: Option<f32>,
         #[arg(short, long)]
         filter: Option<String>,
         #[arg(long, value_name = "WxH+X+Y")]
         crop: Option<String>,
         #[arg(long, value_name = "FILTER")]
         dump_tree: Option<Option<String>>,
+        /// Write a machine-readable manifest of materialized WeakAuras frames.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Resolve this exact WeakAuras display through WeakAuras.GetRegion for the manifest.
+        #[arg(long = "manifest-id", value_name = "DISPLAY_ID")]
+        requested_ids: Vec<String>,
     },
 
     /// Show unique Lua errors as JSON (suppresses other output)
@@ -310,8 +319,12 @@ fn init_environment(
     init_sound(env);
     {
         let mut state = env.state().borrow_mut();
-        let mut addon_base_paths =
-            vec![runtime_blizzard_ui_addons_path_with_setup().map_err(startup_blizzard_ui_help)?];
+        let mut addon_base_paths = if skip_blizzard_ui() {
+            logging::println_elapsed("Blizzard UI loading disabled");
+            Vec::new()
+        } else {
+            vec![runtime_blizzard_ui_addons_path_with_setup().map_err(startup_blizzard_ui_help)?]
+        };
         addon_base_paths.extend(wow_ui_sim::paths::default_addons_paths());
         if args.is_test_command() {
             addon_base_paths.push(PathBuf::from("./Interface/TestAddOns"));
@@ -320,6 +333,12 @@ fn init_environment(
     }
     wow_ui_sim::xml::register_intrinsic_templates();
     Ok(())
+}
+
+fn skip_blizzard_ui() -> bool {
+    std::env::var("WOW_SIM_SKIP_BLIZZARD_UI")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 fn runtime_blizzard_ui_addons_path_with_setup() -> wow_ui_sim::Result<PathBuf> {

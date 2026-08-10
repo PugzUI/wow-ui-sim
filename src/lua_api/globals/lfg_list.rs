@@ -516,7 +516,7 @@ fn create_lfg_application(
     search_result_id: u32,
     role: String,
 ) -> LuaResult<()> {
-    let now = borrow_state(state)?.start_time.elapsed().as_secs_f64();
+    let now = borrow_state(state)?.runtime_time_seconds();
     let mut sim = borrow_state_mut(state)?;
     let app_id = sim.lfg_next_application_id;
     sim.lfg_next_application_id += 1;

@@ -125,6 +125,11 @@ name = "integration"
 path = "tests/integration.rs"
 
 [[test]]
+name = "visualizer_coordinate_raster"
+path = "tests/visualizer_coordinate_raster.rs"
+required-features = ["gui"]
+
+[[test]]
 name = "frame_edit_mode_methods"
 path = "tests/frame_edit_mode_methods.rs"
 

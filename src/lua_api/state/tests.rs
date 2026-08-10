@@ -21,6 +21,20 @@ fn empty_runtime_state_new_seeds_expected_runtime_defaults() {
 }
 
 #[test]
+fn manual_runtime_clock_freezes_and_advances_exactly() {
+    let mut state = SimState::default();
+    assert!(state.manual_time_seconds.is_none());
+
+    let frozen = state.activate_manual_time();
+    assert_eq!(state.runtime_time_seconds(), frozen);
+    assert_eq!(state.manual_time_seconds, Some(frozen));
+
+    let advanced = state.advance_manual_time(0.75);
+    assert!((advanced - frozen - 0.75).abs() < f64::EPSILON);
+    assert_eq!(state.runtime_time_seconds(), advanced);
+}
+
+#[test]
 fn post_event_workaround_marker_is_one_shot() {
     let mut state = SimState::default();
 

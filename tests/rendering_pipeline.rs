@@ -457,7 +457,8 @@ fn layer4_quad_batch_vertex_positions_match_layout() {
 
     // The first quad is the background (full screen). Skip it.
     // Remaining quads should have positions within or near the scroll frame area.
-    // UI_SCALE is 1.0, so layout coords == screen coords.
+    // Layout coordinates are intentionally converted through the fixed
+    // Visualizer UI scale before reaching the renderer.
     let found_in_range = find_vertex_near_rect(&batch, &sf_rect);
 
     assert!(

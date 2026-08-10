@@ -5,39 +5,52 @@
 
 use iced::widget::shader::{Pipeline, Primitive};
 use image::RgbaImage;
+use std::sync::Arc;
 
 use super::shader::primitive::{LoadedTexture, load_texture_prefer_bc};
 use super::shader::{GpuBcTextureData, GpuTextureData, QuadBatch, WowUiPrimitive};
 use crate::texture::TextureManager;
+use crate::widget::FrameStrata;
 
 const BYTES_PER_PIXEL: u32 = 4;
 const READ_BACK_ROW_ALIGNMENT: u32 = 256;
+const HEADLESS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-/// Load unique textures for all batch texture requests.
-fn load_batch_textures(
-    batch: &QuadBatch,
+/// Load unique textures for batches whose paths are not already resident.
+fn load_batches_textures<'a>(
+    batches: impl IntoIterator<Item = &'a QuadBatch>,
     tex_mgr: &mut TextureManager,
+    pipeline: &super::shader::WowUiPipeline,
 ) -> (Vec<GpuTextureData>, Vec<GpuBcTextureData>) {
     let mut textures = Vec::new();
     let mut bc_textures = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for request in batch
-        .texture_requests
-        .iter()
-        .chain(&batch.mask_texture_requests)
-    {
-        if seen.contains(&request.path) {
-            continue;
-        }
-        if let Some(loaded) = load_texture_prefer_bc(tex_mgr, &request.path) {
-            seen.insert(request.path.clone());
-            match loaded {
-                LoadedTexture::Rgba(data) => textures.push(data),
-                LoadedTexture::Bc(data) => bc_textures.push(data),
+    for batch in batches {
+        for request in batch
+            .texture_requests
+            .iter()
+            .chain(&batch.mask_texture_requests)
+        {
+            if !seen.insert(request.path.clone()) || pipeline.has_texture(&request.path) {
+                continue;
+            }
+            if let Some(loaded) = load_texture_prefer_bc(tex_mgr, &request.path) {
+                match loaded {
+                    LoadedTexture::Rgba(data) => textures.push(data),
+                    LoadedTexture::Bc(data) => bc_textures.push(data),
+                }
             }
         }
     }
     (textures, bc_textures)
+}
+
+fn load_batch_textures(
+    batch: &QuadBatch,
+    tex_mgr: &mut TextureManager,
+    pipeline: &super::shader::WowUiPipeline,
+) -> (Vec<GpuTextureData>, Vec<GpuBcTextureData>) {
+    load_batches_textures(std::iter::once(batch), tex_mgr, pipeline)
 }
 
 /// Create a headless wgpu device and queue.
@@ -102,6 +115,7 @@ fn create_render_target(
     (texture, view)
 }
 
+#[derive(Debug, Clone, Copy)]
 struct ReadBackBufferLayout {
     bytes_per_row: u32,
     size_bytes: u64,
@@ -192,29 +206,6 @@ fn image_from_read_back_buffer(
     image
 }
 
-/// Copy render target to a readable buffer and read back pixels into an image.
-fn read_back_pixels(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    encoder: wgpu::CommandEncoder,
-    render_texture: &wgpu::Texture,
-    width: u32,
-    height: u32,
-) -> RgbaImage {
-    let layout = read_back_buffer_layout(width, height);
-    let output_buffer = create_read_back_buffer(device, &layout);
-    queue_read_back_copy(
-        queue,
-        encoder,
-        render_texture,
-        &output_buffer,
-        width,
-        height,
-        layout.bytes_per_row,
-    );
-    read_back_image(device, &output_buffer, width, height, layout.bytes_per_row)
-}
-
 fn queue_read_back_copy(
     queue: &wgpu::Queue,
     encoder: wgpu::CommandEncoder,
@@ -243,16 +234,21 @@ fn read_back_image(
     height: u32,
     bytes_per_row: u32,
 ) -> RgbaImage {
-    let data = map_read_back_buffer(device, output_buffer);
-    image_from_read_back_buffer(&data, width, height, bytes_per_row)
+    let image = {
+        let data = map_read_back_buffer(device, output_buffer);
+        image_from_read_back_buffer(&data, width, height, bytes_per_row)
+    };
+    output_buffer.unmap();
+    image
 }
 
 fn build_headless_primitive(
     batch: &QuadBatch,
     tex_mgr: &mut TextureManager,
+    pipeline: &super::shader::WowUiPipeline,
     glyph_atlas_data: Option<(&[u8], u32)>,
 ) -> WowUiPrimitive {
-    let (textures, bc_textures) = load_batch_textures(batch, tex_mgr);
+    let (textures, bc_textures) = load_batch_textures(batch, tex_mgr, pipeline);
     let mut primitive = WowUiPrimitive::new_merged_with_textures(
         std::sync::Arc::new(batch.clone()),
         textures,
@@ -273,36 +269,25 @@ fn install_glyph_atlas_data(
     primitive.glyph_atlas_size = size;
 }
 
-fn create_headless_pipeline_and_target(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    width: u32,
-    height: u32,
-) -> (
-    super::shader::WowUiPipeline,
-    wgpu::Texture,
-    wgpu::TextureView,
-) {
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let pipeline = super::shader::WowUiPipeline::new(device, queue, format);
-    let (render_texture, render_view) = create_render_target(device, width, height, format);
-    (pipeline, render_texture, render_view)
-}
-
+#[allow(clippy::too_many_arguments)]
 fn prepare_headless_primitive(
     primitive: &mut WowUiPrimitive,
     pipeline: &mut super::shader::WowUiPipeline,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    width: u32,
-    height: u32,
+    stage_width: u32,
+    stage_height: u32,
+    target_width: u32,
+    target_height: u32,
 ) {
     let bounds = iced::Rectangle::new(
         iced::Point::ORIGIN,
-        iced::Size::new(width as f32, height as f32),
+        iced::Size::new(stage_width as f32, stage_height as f32),
     );
-    let viewport =
-        iced::widget::shader::Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
+    let viewport = iced::widget::shader::Viewport::with_physical_size(
+        iced::Size::new(target_width, target_height),
+        1.0,
+    );
     primitive.prepare(pipeline, device, queue, &bounds, &viewport);
 }
 
@@ -322,23 +307,300 @@ fn clear_headless_render_target(
         width,
         height,
     };
+    // The Visualizer stage is an opaque, neutral black canvas.  Keeping the
+    // clear colour here (rather than relying on the shell CSS) makes native
+    // screenshots and live frames identical and removes the old tiled/marble
+    // simulator backdrop from every render path.
     pipeline.render_clear(
         &mut encoder,
         render_view,
         &clip_bounds_u32,
-        [0.05, 0.05, 0.08, 1.0],
+        [0.0, 0.0, 0.0, 1.0],
     );
     encoder
 }
 
-/// Render a QuadBatch to an RGBA image using headless wgpu.
+/// Reusable target/readback allocation for one stream size.
+struct HeadlessTarget {
+    width: u32,
+    height: u32,
+    render_texture: wgpu::Texture,
+    render_view: wgpu::TextureView,
+    output_buffer: wgpu::Buffer,
+    layout: ReadBackBufferLayout,
+}
+
+impl HeadlessTarget {
+    fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        let (render_texture, render_view) =
+            create_render_target(device, width, height, HEADLESS_FORMAT);
+        let layout = read_back_buffer_layout(width, height);
+        let output_buffer = create_read_back_buffer(device, &layout);
+        Self {
+            width,
+            height,
+            render_texture,
+            render_view,
+            output_buffer,
+            layout,
+        }
+    }
+}
+
+/// Session-owned headless GPU context.
 ///
-/// Creates a headless GPU device, sets up the same WowUiPipeline used by
-/// the iced GUI, and renders to an offscreen texture. The result is read
-/// back to CPU memory as an RgbaImage.
+/// Device, pipeline, texture atlas, render target, and readback buffer persist
+/// across frames. This keeps interactive native capture proportional to frame
+/// work instead of repeating GPU initialization and shader compilation.
+pub struct HeadlessRenderer {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    pipeline: super::shader::WowUiPipeline,
+    target: Option<HeadlessTarget>,
+    strata_cache: [Option<Arc<QuadBatch>>; FrameStrata::COUNT],
+    last_glyph_revision: Option<u64>,
+}
+
+impl HeadlessRenderer {
+    pub fn new() -> Self {
+        let (device, queue) = create_headless_device();
+        let pipeline = super::shader::WowUiPipeline::new(&device, &queue, HEADLESS_FORMAT);
+        Self {
+            device,
+            queue,
+            pipeline,
+            target: None,
+            strata_cache: std::array::from_fn(|_| None),
+            last_glyph_revision: None,
+        }
+    }
+
+    fn ensure_target(&mut self, width: u32, height: u32) {
+        if self
+            .target
+            .as_ref()
+            .is_some_and(|target| target.width == width && target.height == height)
+        {
+            return;
+        }
+        self.target = Some(HeadlessTarget::new(&self.device, width, height));
+    }
+
+    /// Whether this independent GPU atlas needs the current glyph pixels.
+    pub fn needs_glyph_upload(&self, revision: u64) -> bool {
+        self.last_glyph_revision != Some(revision)
+    }
+
+    fn record_glyph_upload(&mut self, revision: u64, uploaded: bool) {
+        if uploaded {
+            self.last_glyph_revision = Some(revision);
+        }
+    }
+
+    /// Render one batch at matching stage and target dimensions.
+    pub fn render_to_image(
+        &mut self,
+        batch: &QuadBatch,
+        tex_mgr: &mut TextureManager,
+        width: u32,
+        height: u32,
+        glyph_atlas_data: Option<(&[u8], u32)>,
+    ) -> RgbaImage {
+        self.pipeline.clear_all_strata();
+        self.strata_cache.fill(None);
+        self.render_scaled_to_image(
+            batch,
+            tex_mgr,
+            width,
+            height,
+            width,
+            height,
+            glyph_atlas_data,
+        )
+    }
+
+    /// Exact render with a shared glyph-atlas revision.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_to_image_with_glyph_revision(
+        &mut self,
+        batch: &QuadBatch,
+        tex_mgr: &mut TextureManager,
+        width: u32,
+        height: u32,
+        glyph_atlas_data: Option<(&[u8], u32)>,
+        glyph_revision: u64,
+    ) -> RgbaImage {
+        let uploaded = glyph_atlas_data.is_some();
+        let image = self.render_to_image(batch, tex_mgr, width, height, glyph_atlas_data);
+        self.record_glyph_upload(glyph_revision, uploaded);
+        image
+    }
+
+    /// Render an authoritative stage into a reduced output target.
+    ///
+    /// Vertex geometry and projection remain in stage pixels while the GPU
+    /// viewport scales the result into the stream target.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_scaled_to_image(
+        &mut self,
+        batch: &QuadBatch,
+        tex_mgr: &mut TextureManager,
+        stage_width: u32,
+        stage_height: u32,
+        target_width: u32,
+        target_height: u32,
+        glyph_atlas_data: Option<(&[u8], u32)>,
+    ) -> RgbaImage {
+        self.ensure_target(target_width, target_height);
+        let mut primitive =
+            build_headless_primitive(batch, tex_mgr, &self.pipeline, glyph_atlas_data);
+        let Self {
+            device,
+            queue,
+            pipeline,
+            target,
+            ..
+        } = self;
+        let target = target.as_ref().expect("headless target initialized");
+        prepare_headless_primitive(
+            &mut primitive,
+            pipeline,
+            device,
+            queue,
+            stage_width,
+            stage_height,
+            target_width,
+            target_height,
+        );
+        let encoder = clear_headless_render_target(
+            device,
+            pipeline,
+            &target.render_view,
+            target_width,
+            target_height,
+        );
+        queue_read_back_copy(
+            queue,
+            encoder,
+            &target.render_texture,
+            &target.output_buffer,
+            target_width,
+            target_height,
+            target.layout.bytes_per_row,
+        );
+        read_back_image(
+            device,
+            &target.output_buffer,
+            target_width,
+            target_height,
+            target.layout.bytes_per_row,
+        )
+    }
+
+    /// Render the app's cached native strata, uploading only replaced batches.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_cached_strata_to_image(
+        &mut self,
+        cached: &[Option<Arc<QuadBatch>>; FrameStrata::COUNT],
+        tex_mgr: &mut TextureManager,
+        stage_width: u32,
+        stage_height: u32,
+        target_width: u32,
+        target_height: u32,
+        glyph_atlas_data: Option<(&[u8], u32)>,
+        glyph_revision: u64,
+    ) -> RgbaImage {
+        self.ensure_target(target_width, target_height);
+        let mut dirty: [Option<Arc<QuadBatch>>; FrameStrata::COUNT] = std::array::from_fn(|_| None);
+        for (index, current) in cached.iter().enumerate() {
+            let unchanged = match (&self.strata_cache[index], current) {
+                (Some(previous), Some(current)) => Arc::ptr_eq(previous, current),
+                (None, None) => true,
+                _ => false,
+            };
+            if unchanged {
+                continue;
+            }
+            self.strata_cache[index] = current.clone();
+            dirty[index] = Some(
+                current
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| Arc::new(QuadBatch::new())),
+            );
+        }
+        let (textures, bc_textures) = load_batches_textures(
+            dirty.iter().flatten().map(Arc::as_ref),
+            tex_mgr,
+            &self.pipeline,
+        );
+        let uploaded_glyphs = glyph_atlas_data.is_some();
+        let mut primitive = WowUiPrimitive {
+            strata_batches: dirty,
+            overlay: QuadBatch::new(),
+            clear_color: [0.0, 0.0, 0.0, 1.0],
+            textures,
+            bc_textures,
+            glyph_atlas_data: glyph_atlas_data.map(|(data, _)| data.to_vec()),
+            glyph_atlas_size: glyph_atlas_data.map_or(0, |(_, size)| size),
+            texture_requests: None,
+        };
+        let Self {
+            device,
+            queue,
+            pipeline,
+            target,
+            ..
+        } = self;
+        let target = target.as_ref().expect("headless target initialized");
+        prepare_headless_primitive(
+            &mut primitive,
+            pipeline,
+            device,
+            queue,
+            stage_width,
+            stage_height,
+            target_width,
+            target_height,
+        );
+        let encoder = clear_headless_render_target(
+            device,
+            pipeline,
+            &target.render_view,
+            target_width,
+            target_height,
+        );
+        queue_read_back_copy(
+            queue,
+            encoder,
+            &target.render_texture,
+            &target.output_buffer,
+            target_width,
+            target_height,
+            target.layout.bytes_per_row,
+        );
+        let image = read_back_image(
+            device,
+            &target.output_buffer,
+            target_width,
+            target_height,
+            target.layout.bytes_per_row,
+        );
+        self.record_glyph_upload(glyph_revision, uploaded_glyphs);
+        image
+    }
+}
+
+impl Default for HeadlessRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Render a QuadBatch to an RGBA image using a disposable headless context.
 ///
-/// When `glyph_atlas_data` is provided, text glyphs are rendered using the
-/// glyph atlas texture.
+/// One-shot and test callers retain the historical isolation contract. Warm
+/// Visualizer sessions keep a [`HeadlessRenderer`] in the application state.
 pub fn render_to_image(
     batch: &QuadBatch,
     tex_mgr: &mut TextureManager,
@@ -346,23 +608,7 @@ pub fn render_to_image(
     height: u32,
     glyph_atlas_data: Option<(&[u8], u32)>,
 ) -> RgbaImage {
-    let mut primitive = build_headless_primitive(batch, tex_mgr, glyph_atlas_data);
-    let (device, queue) = create_headless_device();
-    render_headless_primitive_to_image(&mut primitive, &device, &queue, width, height)
-}
-
-fn render_headless_primitive_to_image(
-    primitive: &mut WowUiPrimitive,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    width: u32,
-    height: u32,
-) -> RgbaImage {
-    let (mut pipeline, render_texture, render_view) =
-        create_headless_pipeline_and_target(device, queue, width, height);
-    prepare_headless_primitive(primitive, &mut pipeline, device, queue, width, height);
-    let encoder = clear_headless_render_target(device, &mut pipeline, &render_view, width, height);
-    read_back_pixels(device, queue, encoder, &render_texture, width, height)
+    HeadlessRenderer::new().render_to_image(batch, tex_mgr, width, height, glyph_atlas_data)
 }
 
 #[cfg(test)]

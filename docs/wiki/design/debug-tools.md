@@ -36,6 +36,31 @@ wow-cli dump-tree --visible-only
 
 The key difference: connected mode uses `compute_frame_rect()` for anchor-resolved positions; standalone uses stored `frame.width`/`frame.height` directly.
 
+## Deterministic Frame Time (IPC)
+
+Native evidence can take ownership of OnUpdate-driven frame time through the live Unix socket:
+
+```json
+{"AdvanceFrameTime":{"seconds":0.75,"steps":45}}
+```
+
+The first valid request activates manual frame-time mode for the lifetime of the process. The simulator freezes the current WoW game clock, splits `seconds` into exactly `steps` equal increments, advances `GetTime()` before each matching OnUpdate call, resolves layout after each call, and reports both the command delta and cumulative manually advanced time. Once active:
+
+- `GetTime()` and `GetTimePreciseSec()` remain frozen between explicit requests;
+- wall-clock OnUpdate ticks are suppressed;
+- C_Timer processing, party-health drift, and casting progression are paused;
+- rendering, cooldowns, casts, message expiry, and other game-time consumers read the manual clock;
+- later Lua IPC mutations receive a zero-elapsed OnUpdate flush so state settles without moving animations;
+- only another `AdvanceFrameTime` request advances the WoW game clock and OnUpdate-based animations.
+
+A zero-second request is valid and is the recommended way to freeze time before creating or activating an evidence fixture:
+
+```json
+{"AdvanceFrameTime":{"seconds":0.0,"steps":1}}
+```
+
+Each request is bounded to 60 seconds and 3,600 steps. Process logging and profiling retain their separate monotonic wall clocks; gameplay APIs and native rendering use the deterministic WoW clock.
+
 ## Debug Overlay (Visual)
 
 Shader-level overlays rendered over the live UI:

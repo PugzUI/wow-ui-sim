@@ -2,6 +2,25 @@
 
 Chronological record of wiki operations.
 
+## [2026-08-10] update | Native Visualizer interactive streaming
+
+Added `design/scalpel-visualizer-streaming.md` after separating exact native
+manifest capture from reduced interactive delivery. Documented the `StreamFrame`
+IPC schema, persistent WGPU pipeline/target/readback allocations, live strata
+`Arc` cache reuse, texture and glyph revision reuse, atomic JPEG/WebP output,
+and the 512 × 288 / 8 ms supported capacity profile. Exact 2560 × 1440 PNG
+and manifest evidence remains an independent non-substitutable path. Updated
+`index.md`.
+
+## [2026-08-09] investigation | FontString ancestor movement cache
+
+Created `investigations/fontstring-ancestor-movement-cache.md` after a
+Lua-created FontString reported correct API/manifest state but rendered no
+screenshot pixels following unnamed-parent movement. Recorded that layout
+recomputed descendant rectangles without invalidating their cached absolute
+glyph vertices, the shared rect-change invalidation fix, and the GPU raster
+regression using the bundled Friz Quadrata font. Updated `index.md`.
+
 ## [2026-07-02] update | XML method binding timing
 
 Updated `systems/xml-template-system.md` after live PTR probing and simulator
@@ -1422,3 +1441,11 @@ Added parser and loader support for TOC entries annotated with `[Bootstrap]`, mo
 ## [2026-07-01] correction | `[Bootstrap]` preserves TOC order
 
 Updated `systems/addon-loading.md` after live-client probes showed `[Bootstrap]` is not a separate pass and must not move files out of TOC order. `TocFile` now keeps annotated files in `files` and records a per-file bootstrap flag. Startup loads full TOCs for non-LoD addons and only annotated bootstrap files for LoD addons, preserving addon order; runtime `LoadAddOn` skips already-executed bootstrap files and a self `LoadAddOn(thisAddon)` call from bootstrap remains a benign reentrancy no-op.
+
+## [2026-08-09] update | Native Visualizer coordinate contract v2
+
+Updated `design/scaling-coordinates.md` after proving that native Visualizer manifest rectangles were pre-raster renderer units mislabeled as physical pixels. Added explicit physical, WoW-screen, renderer, local-frame, and parent-anchor spaces; pinned the 2560 × 1440 / 0.53 API values; documented the single renderer-to-physical transform; and defined dual manifest geometry with flat compatibility fields now carrying real PNG pixels. The renderer and manifest share `src/render/coordinates.rs`, preventing caller-specific conversion rules.
+
+## [2026-08-09] update | Deterministic native frame-time IPC
+
+Added bounded `AdvanceFrameTime` IPC for native Visualizer behavior evidence. The first request switches the running GUI to manual frame-time ownership, freezes the WoW game clock, pauses wall-clock OnUpdate/timer/party/casting progression, advances both `GetTime()` and OnUpdate by an exact duration over explicit equal steps, and preserves zero-elapsed Lua mutation flushes. Gameplay rendering and time consumers now share that clock, while process logging/profiling retain separate monotonic wall time. A zero-second request freezes time before fixture activation, making Start/Main/Finish and custom WeakAuras animation captures reproducible without sleeps.

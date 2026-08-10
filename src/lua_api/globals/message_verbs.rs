@@ -93,7 +93,7 @@ fn timestamp_prefix(sim: &crate::lua_api::SimState) -> String {
     if fmt.is_empty() || fmt == "none" {
         return String::new();
     }
-    let elapsed = sim.start_time.elapsed().as_secs();
+    let elapsed = sim.runtime_time_seconds() as u64;
     let hours = (elapsed / 3600) % 24;
     let minutes = (elapsed / 60) % 60;
     format!("{hours:02}:{minutes:02} ")

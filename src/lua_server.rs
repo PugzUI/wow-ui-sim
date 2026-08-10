@@ -45,10 +45,35 @@ pub enum Request {
         width: u32,
         /// Image height in pixels
         height: u32,
+        /// Optional UIParent scale applied before layout and capture.
+        ui_scale: Option<f32>,
         /// Render only this frame subtree (name substring match)
         filter: Option<String>,
         /// Crop the output image to WxH+X+Y (e.g., 700x150+400+650)
         crop: Option<String>,
+        /// Optional machine-readable native region manifest path.
+        manifest: Option<String>,
+        /// Exact WeakAuras display IDs to resolve through WeakAuras.GetRegion.
+        #[serde(default)]
+        requested_ids: Vec<String>,
+    },
+    /// Render the current native stage into a reduced interactive frame.
+    StreamFrame {
+        /// Output JPEG or WebP path.
+        output: String,
+        /// Encoded stream width.
+        width: u32,
+        /// Encoded stream height.
+        height: u32,
+        /// Lossy JPEG or WebP quality from 1 to 100.
+        quality: f32,
+    },
+    /// Advance OnUpdate-driven frame time by an exact duration.
+    AdvanceFrameTime {
+        /// Total frame time to advance in seconds.
+        seconds: f64,
+        /// Number of equal OnUpdate steps used for the advance.
+        steps: u32,
     },
     /// Move the in-app mouse cursor and dispatch hover scripts.
     MouseMove {
@@ -103,8 +128,23 @@ pub enum LuaCommand {
         output: String,
         width: u32,
         height: u32,
+        ui_scale: Option<f32>,
         filter: Option<String>,
         crop: Option<String>,
+        manifest: Option<String>,
+        requested_ids: Vec<String>,
+        respond: mpsc::Sender<Response>,
+    },
+    StreamFrame {
+        output: String,
+        width: u32,
+        height: u32,
+        quality: f32,
+        respond: mpsc::Sender<Response>,
+    },
+    AdvanceFrameTime {
+        seconds: f64,
+        steps: u32,
         respond: mpsc::Sender<Response>,
     },
     MouseMove {
@@ -320,9 +360,31 @@ fn send_app_command_request(request: Request, cmd_tx: &mpsc::Sender<LuaCommand>)
             output,
             width,
             height,
+            ui_scale,
             filter,
             crop,
-        } => send_screenshot_command(cmd_tx, output, width, height, filter, crop),
+            manifest,
+            requested_ids,
+        } => send_screenshot_command(
+            cmd_tx,
+            output,
+            width,
+            height,
+            ui_scale,
+            filter,
+            crop,
+            manifest,
+            requested_ids,
+        ),
+        Request::StreamFrame {
+            output,
+            width,
+            height,
+            quality,
+        } => send_stream_frame_command(cmd_tx, output, width, height, quality),
+        Request::AdvanceFrameTime { seconds, steps } => {
+            send_advance_frame_time_command(cmd_tx, seconds, steps)
+        }
         Request::MouseMove { x, y } => send_mouse_move_command(cmd_tx, x, y),
         Request::MouseClick { x, y } => send_mouse_click_command(cmd_tx, x, y),
     }
@@ -365,15 +427,49 @@ fn send_screenshot_command(
     output: String,
     width: u32,
     height: u32,
+    ui_scale: Option<f32>,
     filter: Option<String>,
     crop: Option<String>,
+    manifest: Option<String>,
+    requested_ids: Vec<String>,
 ) -> Response {
     send_command(cmd_tx, |respond| LuaCommand::Screenshot {
         output,
         width,
         height,
+        ui_scale,
         filter,
         crop,
+        manifest,
+        requested_ids,
+        respond,
+    })
+}
+
+fn send_stream_frame_command(
+    cmd_tx: &mpsc::Sender<LuaCommand>,
+    output: String,
+    width: u32,
+    height: u32,
+    quality: f32,
+) -> Response {
+    send_command(cmd_tx, |respond| LuaCommand::StreamFrame {
+        output,
+        width,
+        height,
+        quality,
+        respond,
+    })
+}
+
+fn send_advance_frame_time_command(
+    cmd_tx: &mpsc::Sender<LuaCommand>,
+    seconds: f64,
+    steps: u32,
+) -> Response {
+    send_command(cmd_tx, |respond| LuaCommand::AdvanceFrameTime {
+        seconds,
+        steps,
         respond,
     })
 }
@@ -439,6 +535,42 @@ pub mod client {
         }
     }
 
+    /// Render the current native stage into a reduced interactive frame.
+    pub fn stream_frame<P: AsRef<Path>>(
+        socket: P,
+        output: &str,
+        width: u32,
+        height: u32,
+        quality: f32,
+    ) -> Result<String, String> {
+        let response = send_request(
+            socket,
+            Request::StreamFrame {
+                output: output.to_string(),
+                width,
+                height,
+                quality,
+            },
+        )?;
+        response_result(response, |response| match response {
+            Response::Output(s) => Some(s),
+            _ => None,
+        })
+    }
+
+    /// Advance deterministic OnUpdate frame time in a running simulator.
+    pub fn advance_frame_time<P: AsRef<Path>>(
+        socket: P,
+        seconds: f64,
+        steps: u32,
+    ) -> Result<String, String> {
+        let response = send_request(socket, Request::AdvanceFrameTime { seconds, steps })?;
+        response_result(response, |response| match response {
+            Response::Output(s) => Some(s),
+            _ => None,
+        })
+    }
+
     /// Move the in-app mouse cursor.
     pub fn mouse_move<P: AsRef<Path>>(socket: P, x: f32, y: f32) -> Result<String, String> {
         let response = send_request(socket, Request::MouseMove { x, y })?;
@@ -487,8 +619,11 @@ pub mod client {
                 output: output.to_string(),
                 width,
                 height,
+                ui_scale: None,
                 filter,
                 crop,
+                manifest: None,
+                requested_ids: Vec::new(),
             },
         )?;
         match response {
@@ -610,6 +745,119 @@ mod tests {
     }
 
     #[test]
+    fn parse_request_accepts_stream_frame_payload() {
+        let request = serde_json::to_string(&Request::StreamFrame {
+            output: "/tmp/frame.jpg".to_string(),
+            width: 960,
+            height: 540,
+            quality: 70.0,
+        })
+        .unwrap();
+
+        let parsed = parse_request(&request).expect("stream-frame request should parse");
+
+        assert!(matches!(
+            parsed,
+            Request::StreamFrame {
+                output,
+                width: 960,
+                height: 540,
+                quality
+            } if output == "/tmp/frame.jpg" && (quality - 70.0).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn handle_request_dispatches_stream_frame_commands() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let response_thread = thread::spawn(move || {
+            let command = cmd_rx.recv().expect("command should be sent");
+            match command {
+                LuaCommand::StreamFrame {
+                    output,
+                    width,
+                    height,
+                    quality,
+                    respond,
+                } => {
+                    assert_eq!(output, "/tmp/frame.jpg");
+                    assert_eq!((width, height), (960, 540));
+                    assert!((quality - 70.0).abs() < f32::EPSILON);
+                    respond
+                        .send(Response::Output("streamed".to_string()))
+                        .expect("response should be accepted");
+                }
+                _ => panic!("unexpected command"),
+            }
+        });
+
+        let response = handle_request(
+            Request::StreamFrame {
+                output: "/tmp/frame.jpg".to_string(),
+                width: 960,
+                height: 540,
+                quality: 70.0,
+            },
+            &cmd_tx,
+        );
+
+        response_thread.join().unwrap();
+        assert!(matches!(response, Response::Output(output) if output == "streamed"));
+    }
+
+    #[test]
+    fn parse_request_accepts_advance_frame_time_payload() {
+        let request = serde_json::to_string(&Request::AdvanceFrameTime {
+            seconds: 0.75,
+            steps: 3,
+        })
+        .unwrap();
+
+        let parsed = parse_request(&request).expect("advance-frame-time request should parse");
+
+        assert!(matches!(
+            parsed,
+            Request::AdvanceFrameTime {
+                seconds,
+                steps: 3
+            } if (seconds - 0.75).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn handle_request_dispatches_advance_frame_time_commands() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let response_thread = thread::spawn(move || {
+            let command = cmd_rx.recv().expect("command should be sent");
+            match command {
+                LuaCommand::AdvanceFrameTime {
+                    seconds,
+                    steps,
+                    respond,
+                } => {
+                    assert!((seconds - 0.75).abs() < f64::EPSILON);
+                    assert_eq!(steps, 3);
+                    respond
+                        .send(Response::Output("advanced".to_string()))
+                        .unwrap();
+                }
+                _ => panic!("expected advance-frame-time command"),
+            }
+        });
+
+        let response = handle_request(
+            Request::AdvanceFrameTime {
+                seconds: 0.75,
+                steps: 3,
+            },
+            &cmd_tx,
+        );
+
+        response_thread.join().unwrap();
+        assert!(matches!(response, Response::Output(body) if body == "advanced"));
+    }
+
+    #[test]
     fn handle_request_dispatches_dump_quads_commands() {
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let response_thread = thread::spawn(move || {
@@ -640,6 +888,80 @@ mod tests {
 
         response_thread.join().unwrap();
         assert!(matches!(response, Response::Quads(body) if body == "quad dump"));
+    }
+
+    #[test]
+    fn screenshot_request_preserves_exact_manifest_ids() {
+        let request = serde_json::to_string(&Request::Screenshot {
+            output: "/tmp/capture.png".to_string(),
+            width: 2560,
+            height: 1440,
+            ui_scale: Some(0.53),
+            filter: None,
+            crop: None,
+            manifest: Some("/tmp/capture.json".to_string()),
+            requested_ids: vec!["Aura A".to_string(), "Aura B".to_string()],
+        })
+        .unwrap();
+        let parsed = parse_request(&request).expect("screenshot request should parse");
+        assert!(matches!(
+            parsed,
+            Request::Screenshot {
+                requested_ids,
+                filter: None,
+                ..
+            } if requested_ids == ["Aura A", "Aura B"]
+        ));
+    }
+
+    #[test]
+    fn screenshot_request_defaults_missing_manifest_ids_for_older_clients() {
+        let parsed = parse_request(
+            r#"{"Screenshot":{"output":"/tmp/capture.png","width":2560,"height":1440,"ui_scale":0.53,"filter":null,"crop":null,"manifest":"/tmp/capture.json"}}"#,
+        )
+        .expect("legacy screenshot request should parse");
+        assert!(matches!(
+            parsed,
+            Request::Screenshot { requested_ids, .. } if requested_ids.is_empty()
+        ));
+    }
+
+    #[test]
+    fn handle_request_forwards_exact_manifest_ids() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let response_thread = thread::spawn(move || {
+            let command = cmd_rx.recv().expect("command should be sent");
+            match command {
+                LuaCommand::Screenshot {
+                    requested_ids,
+                    filter,
+                    respond,
+                    ..
+                } => {
+                    assert_eq!(requested_ids, ["Aura A", "Aura B"]);
+                    assert_eq!(filter, None);
+                    respond
+                        .send(Response::Output("captured".to_string()))
+                        .unwrap();
+                }
+                _ => panic!("expected screenshot command"),
+            }
+        });
+        let response = handle_request(
+            Request::Screenshot {
+                output: "/tmp/capture.png".to_string(),
+                width: 2560,
+                height: 1440,
+                ui_scale: Some(0.53),
+                filter: None,
+                crop: None,
+                manifest: Some("/tmp/capture.json".to_string()),
+                requested_ids: vec!["Aura A".to_string(), "Aura B".to_string()],
+            },
+            &cmd_tx,
+        );
+        response_thread.join().unwrap();
+        assert!(matches!(response, Response::Output(body) if body == "captured"));
     }
 
     #[test]

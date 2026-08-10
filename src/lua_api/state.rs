@@ -140,6 +140,7 @@ macro_rules! build_empty_sim_state {
             rot_damage_level: $runtime.rot_damage_level,
             fps: $runtime.fps,
             start_time: $runtime.start_time,
+            manual_time_seconds: None,
             casting: $runtime.casting,
             channeling: $runtime.channeling,
             next_cast_id: $runtime.next_cast_id,
@@ -643,6 +644,27 @@ impl Default for SimState {
 }
 
 impl SimState {
+    /// Current WoW runtime time. Deterministic Visualizer sessions freeze this
+    /// value between explicit frame-time advances.
+    pub fn runtime_time_seconds(&self) -> f64 {
+        self.manual_time_seconds
+            .unwrap_or_else(|| self.start_time.elapsed().as_secs_f64())
+    }
+
+    /// Freeze the game clock at its current value and return that absolute
+    /// GetTime() value. Repeated calls preserve the existing manual clock.
+    pub fn activate_manual_time(&mut self) -> f64 {
+        let current = self.runtime_time_seconds();
+        *self.manual_time_seconds.get_or_insert(current)
+    }
+
+    /// Advance an already-active manual game clock by an exact duration.
+    pub fn advance_manual_time(&mut self, seconds: f64) -> f64 {
+        let current = self.activate_manual_time() + seconds;
+        self.manual_time_seconds = Some(current);
+        current
+    }
+
     fn seed_default_game_state(&mut self) {
         self.action_bars = default_action_bars();
         self.party_members = default_party();

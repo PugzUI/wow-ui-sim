@@ -6,7 +6,7 @@ use rustc_hash::FxHashSet;
 use crate::render::QuadBatch;
 use crate::render::font::WowFontSystem;
 use crate::render::glyph::GlyphAtlas;
-use crate::render::texture::UI_SCALE;
+use crate::render::texture::ui_scale;
 use crate::widget::WidgetRegistry;
 use crate::widget::WidgetType;
 
@@ -220,7 +220,7 @@ fn resolve_line_endpoint_position(
     let target_id = anchor.target_id?;
     let rect = registry.get(target_id)?.layout_rect?;
     let (ax, ay) = anchor_position(anchor.point, rect.x, rect.y, rect.width, rect.height);
-    let ui_scale = crate::render::texture::UI_SCALE;
+    let ui_scale = crate::render::texture::ui_scale();
     Some((
         (ax + anchor.x_offset) * ui_scale,
         (ay - anchor.y_offset) * ui_scale,
@@ -361,9 +361,10 @@ fn intersect_rects(a: crate::LayoutRect, b: crate::LayoutRect) -> Option<crate::
 }
 
 fn layout_rect_to_screen_rect(rect: crate::LayoutRect) -> Rectangle {
+    let physical = crate::render::coordinates::renderer_rect_to_physical(rect, ui_scale());
     Rectangle::new(
-        Point::new(rect.x * UI_SCALE, rect.y * UI_SCALE),
-        Size::new(rect.width * UI_SCALE, rect.height * UI_SCALE),
+        Point::new(physical.x, physical.y),
+        Size::new(physical.width, physical.height),
     )
 }
 
@@ -480,10 +481,10 @@ pub fn build_hittable_rects(
             (
                 id,
                 Rectangle::new(
-                    Point::new((r.x + il) * UI_SCALE, (r.y + it) * UI_SCALE),
+                    Point::new((r.x + il) * ui_scale(), (r.y + it) * ui_scale()),
                     Size::new(
-                        (r.width - il - ir).max(0.0) * UI_SCALE,
-                        (r.height - it - ib).max(0.0) * UI_SCALE,
+                        (r.width - il - ir).max(0.0) * ui_scale(),
+                        (r.height - it - ib).max(0.0) * ui_scale(),
                     ),
                 ),
                 key,
@@ -527,13 +528,7 @@ fn build_background_batch(screen_size: (f32, f32)) -> QuadBatch {
     let mut batch = QuadBatch::with_capacity(1000);
     let size = Size::new(screen_size.0, screen_size.1);
 
-    batch.push_tiled_path(
-        Rectangle::new(Point::ORIGIN, size),
-        256.0,
-        256.0,
-        "framegeneral/ui-background-marble",
-        [0.55, 0.55, 0.55, 1.0],
-    );
+    batch.push_solid(Rectangle::new(Point::ORIGIN, size), [0.0, 0.0, 0.0, 1.0]);
 
     batch
 }

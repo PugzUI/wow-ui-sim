@@ -125,6 +125,9 @@ pub struct SimState {
     pub rot_damage_level: usize,
     pub fps: f32,
     pub start_time: Instant,
+    /// Absolute GetTime() value while deterministic frame-time mode owns the
+    /// game clock. `None` follows process monotonic time.
+    pub manual_time_seconds: Option<f64>,
     pub casting: Option<CastingState>,
     pub channeling: Option<CastingState>,
     pub next_cast_id: u32,

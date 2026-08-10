@@ -497,6 +497,9 @@ impl App {
     }
 
     fn run_wow_timers(&self) {
+        if self.manual_frame_time_elapsed.is_some() {
+            return;
+        }
         let env = self.env.borrow();
         if let Err(e) = env.process_timers() {
             eprintln!("Timer error: {}", e);
@@ -504,6 +507,9 @@ impl App {
     }
 
     pub(super) fn fire_on_update(&mut self) -> crate::lua_api::on_update::OnUpdateStageTimings {
+        if self.manual_frame_time_elapsed.is_some() {
+            return crate::lua_api::on_update::OnUpdateStageTimings::default();
+        }
         let now = std::time::Instant::now();
         let elapsed = now.duration_since(self.last_on_update_time);
         if elapsed.as_millis() < 16 {
@@ -525,7 +531,7 @@ impl App {
     }
 
     fn tick_party_health(&mut self) {
-        if self.selected_rot_level == "Off" {
+        if self.manual_frame_time_elapsed.is_some() || self.selected_rot_level == "Off" {
             return;
         }
         let now = std::time::Instant::now();
@@ -549,6 +555,9 @@ impl App {
     }
 
     fn tick_casting(&mut self) {
+        if self.manual_frame_time_elapsed.is_some() {
+            return;
+        }
         let env = self.env.borrow();
         let completed = super::casting::extract_completed_cast(env.state());
         if let Some((cast_id, spell_id)) = completed {

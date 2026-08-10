@@ -474,7 +474,7 @@ fn test_hit_rect_insets_shrinks_hittable_rect() {
     let (rid, rect, _key) = &result[0];
     assert_eq!(*rid, id);
 
-    let scale = crate::render::texture::UI_SCALE;
+    let scale = crate::render::texture::ui_scale();
     let expected_x = (100.0 + 10.0) * scale;
     let expected_y = (50.0 + 5.0) * scale;
     let expected_w = (200.0 - 10.0 - 20.0) * scale;

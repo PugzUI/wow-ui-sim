@@ -2,7 +2,7 @@
 
 use iced::Rectangle;
 
-use crate::render::texture::UI_SCALE;
+use crate::render::texture::ui_scale;
 use crate::render::{QuadBatch, TextureRequest};
 
 /// Apply mask texture to recently emitted quads by setting mask_tex_index/mask_tex_coords
@@ -164,8 +164,8 @@ fn apply_mask_to_quad(
 
 fn mask_to_screen_rect(r: crate::LayoutRect) -> Rectangle {
     Rectangle::new(
-        iced::Point::new(r.x * UI_SCALE, r.y * UI_SCALE),
-        iced::Size::new(r.width * UI_SCALE, r.height * UI_SCALE),
+        iced::Point::new(r.x * ui_scale(), r.y * ui_scale()),
+        iced::Size::new(r.width * ui_scale(), r.height * ui_scale()),
     )
 }
 
@@ -365,8 +365,8 @@ mod tests {
         mask.layout_rect = Some(crate::LayoutRect {
             x: 0.0,
             y: 0.0,
-            width: 20.0 / UI_SCALE,
-            height: 20.0 / UI_SCALE,
+            width: 20.0 / ui_scale(),
+            height: 20.0 / ui_scale(),
         });
         registry.register(mask);
 
@@ -396,8 +396,8 @@ mod tests {
         mask.layout_rect = Some(crate::LayoutRect {
             x: 0.0,
             y: 0.0,
-            width: 20.0 / UI_SCALE,
-            height: 20.0 / UI_SCALE,
+            width: 20.0 / ui_scale(),
+            height: 20.0 / ui_scale(),
         });
         registry.register(mask);
 

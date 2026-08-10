@@ -2,6 +2,7 @@ use iced::{Rectangle, Size};
 use std::sync::Arc;
 
 use crate::iced_app::app::App;
+use crate::iced_app::update_runtime::runtime_screen_size;
 use crate::render::{GpuBcTextureData, GpuTextureData, QuadBatch, WowUiPrimitive};
 
 use super::{DrawLogMetrics, DrawQuadRebuild, log_draw_metrics};
@@ -41,10 +42,11 @@ impl App {
     }
 
     fn sync_draw_bounds(&self, bounds: Rectangle) -> Size {
-        let size = bounds.size();
+        let window_size = bounds.size();
+        let size = runtime_screen_size(window_size, crate::render::texture::visualizer_mode());
         if self.gui_startup_complete.get() {
             self.screen_size.set(size);
-            self.sync_screen_size_to_state(size);
+            self.sync_screen_size_to_state(window_size);
         } else {
             self.ensure_gui_startup_for_canvas_size(size);
         }
