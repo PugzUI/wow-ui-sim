@@ -74,6 +74,8 @@ pub struct App {
     pub(crate) texture_manager: Rc<RefCell<TextureManager>>,
     pub(crate) font_system: Rc<RefCell<WowFontSystem>>,
     pub(crate) glyph_atlas: Rc<RefCell<GlyphAtlas>>,
+    /// Reusable offscreen GPU context for exact and interactive captures.
+    pub(crate) headless_renderer: RefCell<Option<crate::render::headless::HeadlessRenderer>>,
     pub(crate) hovered_frame: Option<u64>,
     pub(crate) pressed_frame: Option<u64>,
     pub(crate) mouse_down_frame: Option<u64>,
@@ -233,6 +235,7 @@ macro_rules! app_from_initial_state {
             texture_manager: $init.texture_manager,
             font_system: $init.font_system,
             glyph_atlas: $init.glyph_atlas,
+            headless_renderer: RefCell::new(None),
             hovered_frame: None,
             pressed_frame: None,
             mouse_down_frame: None,

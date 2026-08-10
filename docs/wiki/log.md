@@ -2,6 +2,16 @@
 
 Chronological record of wiki operations.
 
+## [2026-08-10] update | Native Visualizer interactive streaming
+
+Added `design/scalpel-visualizer-streaming.md` after separating exact native
+manifest capture from reduced interactive delivery. Documented the `StreamFrame`
+IPC schema, persistent WGPU pipeline/target/readback allocations, live strata
+`Arc` cache reuse, texture and glyph revision reuse, atomic JPEG/WebP output,
+and the 512 × 288 / 8 ms supported capacity profile. Exact 2560 × 1440 PNG
+and manifest evidence remains an independent non-substitutable path. Updated
+`index.md`.
+
 ## [2026-08-09] investigation | FontString ancestor movement cache
 
 Created `investigations/fontstring-ancestor-movement-cache.md` after a

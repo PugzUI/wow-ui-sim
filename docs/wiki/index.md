@@ -8,6 +8,7 @@ LLM-maintained knowledge base for the wow-ui-sim project.
 |------|---------|
 | [[architecture-overview]] | Project goals, Lua+Rust dual system, module layout, design decisions, phase summary |
 | [[scaling-coordinates]] | Versioned physical, WoW-screen, renderer, local-frame, and anchor coordinate contracts for native capture |
+| [[scalpel-visualizer-streaming]] | Exact 2560×1440 evidence capture versus cached reduced native streaming, IPC schema, resource reuse, and measured capacity contract |
 | [[debug-tools]] | Inspector panel (middle-click), dump-tree CLI (standalone + connected), debug overlay flags |
 
 ## reference/

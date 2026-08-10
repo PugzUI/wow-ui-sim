@@ -105,6 +105,13 @@ impl App {
                 requested_ids,
                 respond,
             ),
+            LuaCommand::StreamFrame {
+                output,
+                width,
+                height,
+                quality,
+                respond,
+            } => self.handle_lua_stream_frame(output, width, height, quality, respond),
             LuaCommand::AdvanceFrameTime {
                 seconds,
                 steps,
@@ -118,6 +125,30 @@ impl App {
     fn handle_lua_exec(&mut self, code: String, respond: mpsc::Sender<LuaResponse>) {
         let response = self.exec_lua_command(&code);
         self.flush_post_script_updates();
+        let _ = respond.send(response);
+    }
+
+    fn handle_lua_stream_frame(
+        &mut self,
+        output: String,
+        width: u32,
+        height: u32,
+        quality: f32,
+        respond: mpsc::Sender<LuaResponse>,
+    ) {
+        let response = if width == 0 || height == 0 || width > 2560 || height > 1440 {
+            LuaResponse::Error("stream dimensions must be within 1..=2560 by 1..=1440".to_string())
+        } else if !quality.is_finite() || !(1.0..=100.0).contains(&quality) {
+            LuaResponse::Error("stream quality must be within 1..=100".to_string())
+        } else {
+            match self.render_stream_frame(&output, width, height, quality) {
+                Ok(frame) => LuaResponse::Output(
+                    serde_json::to_string(&frame)
+                        .unwrap_or_else(|error| format!(r#"{{"error":"{error}"}}"#)),
+                ),
+                Err(error) => LuaResponse::Error(error),
+            }
+        };
         let _ = respond.send(response);
     }
 

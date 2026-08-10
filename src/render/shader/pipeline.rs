@@ -307,6 +307,13 @@ impl WowUiPipeline {
         self.strata_buffers[slot].last_uploaded_vertices.clear();
     }
 
+    /// Clear every native strata and overlay slot without freeing GPU buffers.
+    pub fn clear_all_strata(&mut self) {
+        for slot in 0..self.strata_buffers.len() {
+            self.clear_strata(slot);
+        }
+    }
+
     /// Render all strata + overlay using per-strata GPU buffers.
     pub fn render(
         &self,
@@ -423,6 +430,11 @@ impl WowUiPipeline {
                 render_pass.draw_indexed(0..buf.index_count as u32, 0, 0..1);
             }
         }
+    }
+
+    /// Return whether either native atlas already owns a texture path.
+    pub fn has_texture(&self, path: &str) -> bool {
+        self.texture_atlas.get(path).is_some() || self.texture_atlas.get_bc(path).is_some()
     }
 
     /// Get mutable access to the texture atlas.

@@ -193,7 +193,7 @@ impl App {
     ///
     /// Returns `(batches, rebuilt)` where `rebuilt` is true when any strata
     /// was re-emitted (used for frame-time measurement).
-    fn get_or_rebuild_quads(
+    pub(super) fn get_or_rebuild_quads(
         &self,
         size: Size,
     ) -> ([Option<Arc<QuadBatch>>; FrameStrata::COUNT], bool) {
