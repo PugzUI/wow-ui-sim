@@ -106,16 +106,16 @@ fn wow_string_format(state: &mut LuaState) -> LuaResult<u32> {
         None => return delegate(state, original, &args),
     };
 
-    validate_required_string_arg(&fmt, &args)?;
+    let rest: Vec<Val> = args.iter().skip(1).copied().collect();
+    // process_wow_format now ALWAYS processes the string, since it checks %s arguments too.
+    let (new_fmt, new_rest, modified) = process_wow_format(state, &fmt, &rest)?;
 
-    // Fast path: plain format string.
-    if !fmt.contains('F') && !fmt.contains('$') {
+    // Fast path: if no modifications were made (no positional, no %F, no coercions)
+    if !modified {
         let normalized_args = normalize_nil_numeric_args(&fmt, &args);
         return delegate(state, original, &normalized_args);
     }
 
-    let rest: Vec<Val> = args.iter().skip(1).copied().collect();
-    let (new_fmt, new_rest) = process_wow_format(&fmt, &rest)?;
     let new_fmt_val = create_string(state, &new_fmt);
     let mut delegated: Vec<Val> = Vec::with_capacity(new_rest.len() + 1);
     delegated.push(new_fmt_val);
@@ -135,51 +135,6 @@ fn read_string(
 ) -> Option<String> {
     let lua_str = state.gc.string_arena.get(s)?;
     std::str::from_utf8(lua_str.data()).ok().map(str::to_owned)
-}
-
-fn format_requires_string_arg(fmt: &str) -> bool {
-    let bytes = fmt.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'%' {
-            i += 1;
-            continue;
-        }
-        if i + 1 < bytes.len() && bytes[i + 1] == b'%' {
-            i += 2;
-            continue;
-        }
-        let mut j = i + 1;
-        while j < bytes.len()
-            && matches!(
-                bytes[j] as char,
-                '-' | '+' | ' ' | '#' | '0' | '.' | '1'..='9'
-            )
-        {
-            j += 1;
-        }
-        if j < bytes.len() && matches!(bytes[j] as char, 's' | 'q') {
-            return true;
-        }
-        i = j.saturating_add(1);
-    }
-    false
-}
-
-fn validate_required_string_arg(fmt: &str, args: &[Val]) -> LuaResult<()> {
-    if !format_requires_string_arg(fmt) {
-        return Ok(());
-    }
-
-    match args.get(1).copied() {
-        None => Err(runtime_error(
-            "bad argument #2 to '?' (string expected, got no value)",
-        )),
-        Some(Val::Nil) => Err(runtime_error(
-            "bad argument #2 to '?' (string expected, got nil)",
-        )),
-        _ => Ok(()),
-    }
 }
 
 fn normalize_nil_numeric_args(fmt: &str, args: &[Val]) -> Vec<Val> {
@@ -325,12 +280,17 @@ mod tests {
 /// in positional order (or the original args when no positional spec
 /// was found — matching master behaviour and avoiding unnecessary
 /// cloning on the hot path).
-fn process_wow_format(fmt: &str, args: &[Val]) -> LuaResult<(String, Vec<Val>)> {
+fn process_wow_format(
+    state: &mut LuaState,
+    fmt: &str,
+    args: &[Val],
+) -> LuaResult<(String, Vec<Val>, bool)> {
     let bytes = fmt.as_bytes();
     let mut out = String::with_capacity(bytes.len());
     let mut reordered: Vec<Val> = Vec::new();
     let mut seq: usize = 0;
     let mut has_positional = false;
+    let mut modified = false;
     let mut i = 0;
 
     while i < bytes.len() {
@@ -342,6 +302,7 @@ fn process_wow_format(fmt: &str, args: &[Val]) -> LuaResult<(String, Vec<Val>)> 
             i += 2;
         } else {
             i = parse_format_specifier(
+                state,
                 bytes,
                 i,
                 args,
@@ -349,20 +310,22 @@ fn process_wow_format(fmt: &str, args: &[Val]) -> LuaResult<(String, Vec<Val>)> 
                 &mut reordered,
                 &mut seq,
                 &mut has_positional,
+                &mut modified,
             )?;
         }
     }
 
-    if has_positional {
-        Ok((out, reordered))
+    if has_positional || modified {
+        Ok((out, reordered, true))
     } else {
-        Ok((out, args.to_vec()))
+        Ok((out, args.to_vec(), false))
     }
 }
 
 /// Parse one format specifier starting at `%`, appending to `out` and
 /// collecting the matched arg. Returns the index after the specifier.
 fn parse_format_specifier(
+    state: &mut LuaState,
     bytes: &[u8],
     start: usize,
     args: &[Val],
@@ -370,8 +333,11 @@ fn parse_format_specifier(
     reordered: &mut Vec<Val>,
     seq: &mut usize,
     has_positional: &mut bool,
+    modified: &mut bool,
 ) -> LuaResult<usize> {
     let mut i = start + 1; // skip the '%'
+
+    let arg_index;
 
     if let Some((n, after)) = parse_positional_index(bytes, i) {
         if n >= 100 {
@@ -380,29 +346,83 @@ fn parse_format_specifier(
             ));
         }
         *has_positional = true;
-        // A positional spec `%N$` bumps `seq` to max(seq, N) without
-        // consuming. Later sequential specs then pick from `seq+1` onward,
-        // matching WoW's patched LuaJIT where sequential consumes the
-        // lowest arg slot not yet "seen" by positional refs.
         *seq = std::cmp::max(*seq, n);
-        reordered.push(args.get(n - 1).copied().unwrap_or(Val::Nil));
+        arg_index = n;
         out.push('%');
         i = after;
     } else {
         *seq += 1;
-        reordered.push(args.get(*seq - 1).copied().unwrap_or(Val::Nil));
+        arg_index = *seq;
         out.push('%');
     }
 
+    let mut arg_val = args.get(arg_index.saturating_sub(1)).copied();
+
     i = skip_flags_width_precision(bytes, i, out);
     if i < bytes.len() && is_format_conversion(bytes[i]) {
-        out.push(if bytes[i] == b'F' {
-            'f'
+        let conv = bytes[i];
+
+        if conv == b's' || conv == b'q' {
+            // String coercion for %s or %q
+            match arg_val {
+                None => {
+                    if *has_positional {
+                        arg_val = Some(create_string(state, "nil"));
+                        *modified = true;
+                    } else {
+                        return Err(runtime_error(format!(
+                            "bad argument #{} to '?' (string expected, got no value)",
+                            arg_index + 1
+                        )));
+                    }
+                }
+                Some(Val::Nil) => {
+                    if *has_positional {
+                        arg_val = Some(create_string(state, "nil"));
+                        *modified = true;
+                    } else {
+                        return Err(runtime_error(format!(
+                            "bad argument #{} to '?' (string expected, got nil)",
+                            arg_index + 1
+                        )));
+                    }
+                }
+                Some(Val::Bool(_)) | Some(Val::Table(_)) => {
+                    return Err(runtime_error(format!(
+                        "bad argument #{} to '?' (string expected, got {})",
+                        arg_index + 1,
+                        arg_val.unwrap().type_name()
+                    )));
+                }
+                Some(Val::Num(n)) => {
+                    // Normalize the numeric value to a string
+                    let s = format!("{}", n);
+                    arg_val = Some(create_string(state, &s));
+                    *modified = true;
+                }
+                Some(Val::Str(_)) => {
+                    // All good
+                }
+                Some(other) => {
+                    return Err(runtime_error(format!(
+                        "bad argument #{} to '?' (string expected, got {})",
+                        arg_index + 1,
+                        other.type_name()
+                    )));
+                }
+            }
+        }
+
+        if conv == b'F' {
+            out.push('f');
+            *modified = true;
         } else {
-            bytes[i] as char
-        });
+            out.push(conv as char);
+        }
         i += 1;
     }
+
+    reordered.push(arg_val.unwrap_or(Val::Nil));
     Ok(i)
 }
 

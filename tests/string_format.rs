@@ -142,3 +142,48 @@ fn patched_format_appears_as_a_function() {
     let kind: String = env.eval(r#"return type(string.format)"#).unwrap();
     assert_eq!(kind, "function");
 }
+
+#[test]
+fn string_specifier_coerces_number_to_string() {
+    let env = env();
+    let out: String = env
+        .eval(r#"return string.format("%s", 42)"#)
+        .unwrap();
+    assert_eq!(out, "42");
+}
+
+#[test]
+fn string_specifier_coerces_number_to_string_with_positional() {
+    let env = env();
+    let out: String = env
+        .eval(r#"return string.format("%s %1$s", 42)"#)
+        .unwrap();
+    assert_eq!(out, "42 42");
+}
+
+#[test]
+fn string_specifier_fails_if_boolean_is_passed() {
+    let env = env();
+    let out = env.eval::<String>(r#"return string.format("%s", true)"#);
+    assert!(out.is_err());
+    let err_msg = out.unwrap_err().to_string();
+    assert!(err_msg.contains("bad argument #2 to '?' (string expected, got boolean)"));
+}
+
+#[test]
+fn string_specifier_fails_if_nil_is_passed() {
+    let env = env();
+    let out = env.eval::<String>(r#"return string.format("%s", nil)"#);
+    assert!(out.is_err());
+    let err_msg = out.unwrap_err().to_string();
+    assert!(err_msg.contains("bad argument #2 to '?' (string expected, got nil)"));
+}
+
+#[test]
+fn string_specifier_fails_if_missing_arg() {
+    let env = env();
+    let out = env.eval::<String>(r#"return string.format("%s %s", "hello")"#);
+    assert!(out.is_err());
+    let err_msg = out.unwrap_err().to_string();
+    assert!(err_msg.contains("bad argument #3 to '?' (string expected, got no value)"));
+}
