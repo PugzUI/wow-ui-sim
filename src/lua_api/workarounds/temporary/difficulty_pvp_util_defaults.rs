@@ -142,8 +142,11 @@ if GetLegacyRaidDifficultyID == nil then
 end
 if GetDifficultyInfo == nil then
     function GetDifficultyInfo(difficultyID)
-        return DifficultyUtil.GetDifficultyName(difficultyID) or PLAYER_DIFFICULTY1 or "Normal",
-            0, false, false, false, false
+        local name = DifficultyUtil.GetDifficultyName(difficultyID)
+        if not name then
+            return nil
+        end
+        return name, 0, false, false, false, false
     end
 end
 "#;
@@ -185,6 +188,8 @@ mod tests {
                 if instanceType ~= 0 then return "difficulty_info_instance_type" end
                 if isHeroic ~= false or isChallengeMode ~= false then return "difficulty_info_flags" end
                 if displayHeroic ~= false or displayMythic ~= false then return "difficulty_info_display" end
+                if GetDifficultyInfo(260) ~= nil then return "unknown_difficulty" end
+
 
                 if PVPUtil.GetTierName(1) ~= "" then return "tier_name" end
                 if PVPUtil.GetTierDescription(1) ~= "" then return "tier_description" end

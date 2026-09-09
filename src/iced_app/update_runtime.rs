@@ -602,4 +602,11 @@ mod stage_contract_tests {
             iced::Size::new(1010.0, 576.2),
         );
     }
+
+    #[test]
+    fn regular_runtime_uses_the_full_available_client_size() {
+        let client_size = iced::Size::new(2546.0, 1203.0);
+
+        assert_eq!(runtime_screen_size(client_size, false), client_size);
+    }
 }

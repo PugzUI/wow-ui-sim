@@ -106,6 +106,66 @@ pub(in crate::lua_api::frame::methods::button_anchor_hierarchy) fn set_animation
     Ok(0)
 }
 
+pub(in crate::lua_api::frame::methods::button_anchor_hierarchy) fn animation_set_degrees(
+    state: &mut LuaState,
+) -> LuaResult<u32> {
+    let degrees = match stack_val(state, 2) {
+        Val::Num(value) => value,
+        _ => 0.0,
+    };
+    with_animation_state_mut(state, |a| a.degrees = degrees)?;
+    Ok(0)
+}
+
+pub(in crate::lua_api::frame::methods::button_anchor_hierarchy) fn animation_get_degrees(
+    state: &mut LuaState,
+) -> LuaResult<u32> {
+    push_anim_field(state, |a| a.degrees)
+}
+
+pub(in crate::lua_api::frame::methods::button_anchor_hierarchy) fn animation_set_origin(
+    state: &mut LuaState,
+) -> LuaResult<u32> {
+    let origin = String::from_stack(state, 2)?;
+    let x = match stack_val(state, 3) {
+        Val::Num(value) => value,
+        _ => 0.0,
+    };
+    let y = match stack_val(state, 4) {
+        Val::Num(value) => value,
+        _ => 0.0,
+    };
+    with_animation_state_mut(state, |a| {
+        a.origin = origin;
+        a.origin_x = x;
+        a.origin_y = y;
+    })?;
+    Ok(0)
+}
+
+pub(in crate::lua_api::frame::methods::button_anchor_hierarchy) fn animation_get_origin(
+    state: &mut LuaState,
+) -> LuaResult<u32> {
+    let animation_frame_id = frame_id_from_stack(state, 1)?;
+    let (origin, x, y) = {
+        let sim = borrow_state(state)?;
+        sim.anim_frame_to_anim
+            .get(&animation_frame_id)
+            .and_then(|(group_id, animation_index)| {
+                sim.animation_groups
+                    .get(group_id)
+                    .and_then(|group| group.animations.get(*animation_index))
+                    .map(|a| (a.origin.clone(), a.origin_x, a.origin_y))
+            })
+            .unwrap_or_else(|| ("CENTER".to_string(), 0.0, 0.0))
+    };
+    let origin = Val::Str(state.gc.intern_string(origin.as_bytes()));
+    state.push(origin);
+    state.push(Val::Num(x));
+    state.push(Val::Num(y));
+    Ok(3)
+}
+
 // ── Flipbook animation ────────────────────────────────────────────────────────
 
 pub(in crate::lua_api::frame::methods::button_anchor_hierarchy) fn animation_set_flipbook_rows(

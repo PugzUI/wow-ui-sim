@@ -64,13 +64,10 @@ fn hittable_rect(
     let rect = f.layout_rect?;
     let (il, ir, it, ib) = super::frame_collect::scaled_hit_rect_insets(f);
     Some(iced::Rectangle::new(
-        iced::Point::new(
-            (rect.x + il) * crate::render::texture::ui_scale(),
-            (rect.y + it) * crate::render::texture::ui_scale(),
-        ),
+        iced::Point::new(rect.x + il, rect.y + it),
         iced::Size::new(
-            (rect.width - il - ir).max(0.0) * crate::render::texture::ui_scale(),
-            (rect.height - it - ib).max(0.0) * crate::render::texture::ui_scale(),
+            (rect.width - il - ir).max(0.0),
+            (rect.height - it - ib).max(0.0),
         ),
     ))
 }

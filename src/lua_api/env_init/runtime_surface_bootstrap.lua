@@ -1,3 +1,14 @@
+-- Blizzard Constants recreates these tables and asks the client to fill them.
+-- The simulator uses enUS names for both sexes; GetNumClasses applies the profile.
+if rawget(_G, "FillLocalizedClassList") == nil then
+  function FillLocalizedClassList(classTable, _isFemale)
+    for classIndex = 1, GetNumClasses() do
+      local name, classFile = GetClassInfo(classIndex)
+      classTable[classFile] = name
+    end
+  end
+end
+
 local function __wow_noop()
 end
 

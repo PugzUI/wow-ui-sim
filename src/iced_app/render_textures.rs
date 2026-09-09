@@ -9,7 +9,6 @@ use crate::render::shader::primitive::{
     TextureLoadTelemetry, TextureRequestTracker, load_texture_or_crop,
     load_texture_prefer_bc_with_telemetry,
 };
-use crate::render::texture::ui_scale;
 use crate::render::{GpuBcTextureData, GpuTextureData, QuadBatch};
 use crate::widget::{Frame, FrameStrata, WidgetRegistry, WidgetType};
 
@@ -441,8 +440,8 @@ fn debug_overlay_frame(
         return None;
     }
     let bounds = Rectangle::new(
-        Point::new(rect.x * ui_scale(), rect.y * ui_scale()),
-        Size::new(rect.width * ui_scale(), rect.height * ui_scale()),
+        Point::new(rect.x, rect.y),
+        Size::new(rect.width, rect.height),
     );
     Some((frame, rect, bounds))
 }
@@ -464,8 +463,8 @@ fn layout_rect_bounds(rect: crate::LayoutRect) -> Option<Rectangle> {
     }
 
     Some(Rectangle::new(
-        Point::new(rect.x * ui_scale(), rect.y * ui_scale()),
-        Size::new(rect.width * ui_scale(), rect.height * ui_scale()),
+        Point::new(rect.x, rect.y),
+        Size::new(rect.width, rect.height),
     ))
 }
 
@@ -498,13 +497,7 @@ fn append_anchor_markers(overlay: &mut QuadBatch, frame: &Frame, rect: crate::La
     const ANCHOR_MARKER_COLOR: [f32; 4] = [0.1, 1.0, 0.1, 1.0];
 
     for anchor in &frame.anchors {
-        let (x, y) = anchor_position(
-            anchor.point,
-            rect.x * ui_scale(),
-            rect.y * ui_scale(),
-            rect.width * ui_scale(),
-            rect.height * ui_scale(),
-        );
+        let (x, y) = anchor_position(anchor.point, rect.x, rect.y, rect.width, rect.height);
         overlay.push_solid(
             Rectangle::new(
                 Point::new(x - ANCHOR_MARKER_OFFSET, y - ANCHOR_MARKER_OFFSET),

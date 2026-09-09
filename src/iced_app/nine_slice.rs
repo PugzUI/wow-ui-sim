@@ -99,6 +99,7 @@ fn emit_horiz_edge(batch: &mut QuadBatch, bounds: Rectangle, piece: &NineSlicePi
             tile_w: piece.width as f32,
             tint: [1.0, 1.0, 1.0, alpha],
             blend: BlendMode::Alpha,
+            gradient: None,
         },
     );
 }
@@ -146,6 +147,7 @@ fn emit_vert_edge_strip(
             tile_h: piece.height as f32,
             tint: [1.0, 1.0, 1.0, alpha],
             blend: BlendMode::Alpha,
+            gradient: None,
         },
     );
 }

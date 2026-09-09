@@ -1,6 +1,6 @@
 //! WoW UI shader primitive implementation.
 
-use super::quad::TextureRequestHandle;
+use super::quad::{FLAG_COOLDOWN_SWIPE, TextureRequestHandle};
 use super::{QuadBatch, WowUiPipeline};
 use iced::Rectangle;
 use iced::widget::shader::{self, Viewport};
@@ -544,24 +544,27 @@ fn apply_rgba_entry(
     use_uv_inset: bool,
 ) {
     let tex_idx = entry.tex_index();
+    let u_remap = UvRemap::entry_axis(entry.uv_x, entry.uv_width, entry.original_width, entry.tier)
+        .with_inset(use_uv_inset);
+    let v_remap = UvRemap::entry_axis(
+        entry.uv_y,
+        entry.uv_height,
+        entry.original_height,
+        entry.tier,
+    )
+    .with_inset(use_uv_inset);
     for vertex in vertices.iter_mut() {
         if vertex.tex_index == -2 {
             vertex.tex_index = tex_idx;
-            vertex.tex_coords[0] = remap_entry_uv(
-                vertex.tex_coords[0],
-                UvRemap::entry_axis(entry.uv_x, entry.uv_width, entry.original_width, entry.tier)
-                    .with_inset(use_uv_inset),
-            );
-            vertex.tex_coords[1] = remap_entry_uv(
-                vertex.tex_coords[1],
-                UvRemap::entry_axis(
-                    entry.uv_y,
-                    entry.uv_height,
-                    entry.original_height,
-                    entry.tier,
-                )
-                .with_inset(use_uv_inset),
-            );
+            if vertex.flags & FLAG_COOLDOWN_SWIPE != 0 {
+                // Cooldown swipes overload tex_coords.x with radial progress;
+                // the source texture UVs live in mask_tex_coords instead.
+                vertex.mask_tex_coords[0] = remap_entry_uv(vertex.mask_tex_coords[0], u_remap);
+                vertex.mask_tex_coords[1] = remap_entry_uv(vertex.mask_tex_coords[1], v_remap);
+            } else {
+                vertex.tex_coords[0] = remap_entry_uv(vertex.tex_coords[0], u_remap);
+                vertex.tex_coords[1] = remap_entry_uv(vertex.tex_coords[1], v_remap);
+            }
         }
     }
 }
@@ -574,18 +577,35 @@ fn apply_bc_entry(
     for vertex in vertices.iter_mut() {
         if vertex.tex_index == -2 {
             vertex.tex_index = tex_idx;
-            vertex.tex_coords[0] = remap_bc_entry_uv(
-                vertex.tex_coords[0],
-                bc_entry.uv_x,
-                bc_entry.uv_width,
-                bc_entry.original_width,
-            );
-            vertex.tex_coords[1] = remap_bc_entry_uv(
-                vertex.tex_coords[1],
-                bc_entry.uv_y,
-                bc_entry.uv_height,
-                bc_entry.original_height,
-            );
+            if vertex.flags & FLAG_COOLDOWN_SWIPE != 0 {
+                // See the RGBA path above: radial progress must remain in
+                // tex_coords.x while the source sample is atlas-remapped.
+                vertex.mask_tex_coords[0] = remap_bc_entry_uv(
+                    vertex.mask_tex_coords[0],
+                    bc_entry.uv_x,
+                    bc_entry.uv_width,
+                    bc_entry.original_width,
+                );
+                vertex.mask_tex_coords[1] = remap_bc_entry_uv(
+                    vertex.mask_tex_coords[1],
+                    bc_entry.uv_y,
+                    bc_entry.uv_height,
+                    bc_entry.original_height,
+                );
+            } else {
+                vertex.tex_coords[0] = remap_bc_entry_uv(
+                    vertex.tex_coords[0],
+                    bc_entry.uv_x,
+                    bc_entry.uv_width,
+                    bc_entry.original_width,
+                );
+                vertex.tex_coords[1] = remap_bc_entry_uv(
+                    vertex.tex_coords[1],
+                    bc_entry.uv_y,
+                    bc_entry.uv_height,
+                    bc_entry.original_height,
+                );
+            }
         }
     }
 }

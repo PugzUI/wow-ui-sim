@@ -110,6 +110,8 @@
 6204383;interface/addons/blizzard_achievementui/blizzard_achievementui_mists.toc
 5662801;interface/addons/blizzard_achievementui/cata/blizzard_achievementui.lua
 5662802;interface/addons/blizzard_achievementui/cata/blizzard_achievementui.xml
+5662978;interface/addons/blizzard_achievementui/classic/blizzard_achievementui_shared.lua
+5612815;interface/addons/blizzard_achievementui/classic/localization.lua
 5613880;interface/addons/blizzard_achievementui/mainline/blizzard_achievementui.lua
 5613917;interface/addons/blizzard_achievementui/mainline/blizzard_achievementui.xml
 5612933;interface/addons/blizzard_achievementui/mainline/localization.lua

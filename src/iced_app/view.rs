@@ -8,14 +8,18 @@ use iced::widget::{
     Column, Container, button, checkbox, column, container, row, scrollable, space, stack, text,
     text_input,
 };
-use iced::{Border, Color, Element, Font, Length, Padding, Subscription};
+use iced::{Border, Color, Element, Length, Padding, Subscription};
 
 use crate::LayoutRect;
 
 use super::Message;
 use super::app::App;
 use super::layout::compute_frame_rect;
-use super::styles::{event_button_style, input_style, palette, run_button_style};
+use super::styles::{
+    command_button_style, event_button_style, input_style, palette, run_button_style,
+};
+
+const COMMAND_CONTROL_HEIGHT: f32 = 30.0;
 
 /// Resolve a frame's display name, using the owner addon as fallback for anonymous frames.
 fn anon_display_name(
@@ -31,10 +35,6 @@ fn anon_display_name(
         }
     }
     "(anon)".to_string()
-}
-
-fn console_text_from_log_messages(log_messages: &[String]) -> String {
-    log_messages.join("\n")
 }
 
 fn should_dispatch_wow_key(status: iced::event::Status, wow_key: &str) -> bool {
@@ -94,20 +94,22 @@ fn timer_subscription(interval: std::time::Duration) -> Subscription<Message> {
     iced::time::every(interval).map(Message::ProcessTimers)
 }
 
+fn ipc_subscription() -> Subscription<Message> {
+    Subscription::run(|| {
+        iced::futures::stream::unfold((), |()| async {
+            crate::lua_server_contract::COMMAND_READY.notified().await;
+            Some((Message::IpcReady, ()))
+        })
+    })
+}
+
 impl App {
-    /// Build the title bar with FPS counter, frame time, and canvas size.
+    /// Build the application header.
     fn build_title_bar(&self) -> Element<'_, Message> {
-        let screen = self.screen_size.get();
-        let screen_str = format!(" | screen:{}x{}", screen.width as i32, screen.height as i32);
-        let title_text = format!(
-            "WoW UI Simulator  [{:.1} FPS | tick:{:.2}ms | draw:{:.2}ms | other:{:.2}ms{}]",
-            self.fps,
-            self.tick_time_display,
-            self.draw_time_display,
-            self.other_time_display,
-            screen_str
-        );
-        text(title_text).size(20).color(palette::GOLD).into()
+        text("WoW UI Simulator")
+            .size(20)
+            .color(palette::HEADER_GOLD)
+            .into()
     }
 
     /// Build the canvas area with optional inspector panel overlay.
@@ -134,6 +136,27 @@ impl App {
                 },
                 ..Default::default()
             })
+    }
+
+    /// Build the native Visualizer surface without simulator controls.
+    ///
+    /// Blizzard FrameXML still has to be loaded by rilua so addons can use the
+    /// same templates and globals they use in-game. The Visualizer window only
+    /// exposes the addon-owned canvas, however; the title bar, frame browser,
+    /// command strip, and inspector belong to the simulator shell and stay
+    /// outside this mode.
+    fn build_visualizer_canvas(&self) -> Element<'_, Message> {
+        let shader: Shader<Message, &App> =
+            Shader::new(self).width(Length::Fill).height(Length::Fill);
+
+        container(shader)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(Color::BLACK)),
+                ..Default::default()
+            })
+            .into()
     }
 
     /// Build the collapsible frames sidebar panel.
@@ -206,48 +229,31 @@ impl App {
     /// Build the command input row.
     fn build_command_row(&self) -> Element<'_, Message> {
         row![
-            text_input("/command", &self.command_input)
-                .on_input(Message::CommandInputChanged)
-                .on_submit(Message::ExecuteCommand)
-                .width(Length::Fill)
-                .style(input_style),
+            container(
+                text_input("/command", &self.command_input)
+                    .on_input(Message::CommandInputChanged)
+                    .on_submit(Message::ExecuteCommand)
+                    .width(Length::Fill)
+                    .style(input_style),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(COMMAND_CONTROL_HEIGHT))
+            .align_y(iced::Alignment::Center),
             button(text("Run").size(12))
                 .on_press(Message::ExecuteCommand)
+                .height(Length::Fixed(COMMAND_CONTROL_HEIGHT))
                 .style(run_button_style),
         ]
         .spacing(6)
+        .align_y(iced::Alignment::Center)
         .into()
     }
 
-    /// Build the console output area showing full log history with scrollback.
-    fn build_console(&self) -> Container<'_, Message> {
-        let console_text = console_text_from_log_messages(&self.log_messages);
-
-        container(
-            scrollable(
-                text(console_text)
-                    .size(12)
-                    .color(palette::CONSOLE_TEXT)
-                    .font(Font::MONOSPACE),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(80)
-        .padding(6)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(palette::BG_INPUT)),
-            border: Border {
-                color: palette::BORDER,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        })
-    }
-
     pub fn view(&self) -> Element<'_, Message> {
+        if crate::render::texture::visualizer_mode() {
+            return self.build_visualizer_canvas();
+        }
+
         let title = self.build_title_bar();
         let render_container = self.build_canvas_area();
 
@@ -255,18 +261,32 @@ impl App {
         let sidebar_positioned = container(self.build_sidebar_panel())
             .width(Length::Fill)
             .align_x(iced::alignment::Horizontal::Right);
-        let content_row = stack![render_container, sidebar_positioned];
+        let content_row = stack![render_container, sidebar_positioned].height(Length::Fill);
 
-        let bottom_row = row![
-            button(text("Options").size(12))
-                .on_press(Message::ToggleOptionsModal)
-                .style(event_button_style),
-            self.build_command_row(),
-        ]
-        .spacing(6)
-        .align_y(iced::Alignment::Center);
+        let command_strip = container(
+            row![
+                button(text("Options").size(12))
+                    .on_press(Message::ToggleOptionsModal)
+                    .height(Length::Fixed(COMMAND_CONTROL_HEIGHT))
+                    .style(command_button_style),
+                self.build_command_row(),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding(6)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(palette::CHROME_BACKGROUND)),
+            border: Border {
+                color: palette::CHROME_BORDER,
+                width: 1.0,
+                radius: 3.0.into(),
+            },
+            ..Default::default()
+        });
 
-        let main_column = column![title, content_row, bottom_row, self.build_console()]
+        let main_column = column![title, content_row, command_strip]
             .spacing(5)
             .padding(7);
 
@@ -287,7 +307,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let keyboard = keyboard_subscription();
+        let input = Subscription::batch([keyboard_subscription(), ipc_subscription()]);
 
         if let Some(interval) = self.compute_tick_interval() {
             if crate::logging::gui_trace_enabled() {
@@ -296,12 +316,12 @@ impl App {
                 ));
             }
             let timer = timer_subscription(interval);
-            Subscription::batch([timer, keyboard])
+            Subscription::batch([timer, input])
         } else {
             if crate::logging::gui_trace_enabled() {
                 crate::logging::eprintln_gui_trace("subscription tick interval=none");
             }
-            keyboard
+            input
         }
     }
 
@@ -704,28 +724,11 @@ fn truncate_sidebar_label(display: String) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::console_text_from_log_messages;
+mod command_strip_tests {
+    use super::COMMAND_CONTROL_HEIGHT;
 
     #[test]
-    fn console_text_includes_full_scrollback_without_truncation() {
-        let lines = (0..8)
-            .map(|index| format!("line-{index}"))
-            .collect::<Vec<_>>();
-        let rendered = console_text_from_log_messages(&lines);
-        assert_eq!(rendered.lines().count(), 8);
-        assert!(rendered.contains("line-0"));
-        assert!(rendered.contains("line-7"));
-    }
-
-    #[test]
-    fn console_text_preserves_message_order() {
-        let lines = vec![
-            "first".to_string(),
-            "second".to_string(),
-            "third".to_string(),
-        ];
-        let rendered = console_text_from_log_messages(&lines);
-        assert_eq!(rendered, "first\nsecond\nthird");
+    fn command_controls_have_one_exact_height() {
+        assert_eq!(COMMAND_CONTROL_HEIGHT, 30.0);
     }
 }

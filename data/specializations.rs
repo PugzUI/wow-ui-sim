@@ -13,6 +13,8 @@ pub struct SpecInfo {
     pub role: &'static str,
     /// LE_UNIT_STAT value: 1=Strength, 2=Agility, 4=Intellect
     pub primary_stat: u32,
+    /// Mastery spell IDs (ChrSpecialization MasterySpellID_0/_1, zero entries dropped).
+    pub mastery_spell_ids: &'static [u32],
 }
 
 pub const SPECS: &[SpecInfo] = &[
@@ -25,6 +27,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135932,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[190740],
     },
     SpecInfo {
         id: 63,
@@ -35,6 +38,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135810,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[12846],
     },
     SpecInfo {
         id: 64,
@@ -45,6 +49,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135846,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[1246752],
     },
     SpecInfo {
         id: 65,
@@ -55,6 +60,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135920,
         role: "HEALER",
         primary_stat: 4,
+        mastery_spell_ids: &[183997],
     },
     SpecInfo {
         id: 66,
@@ -65,6 +71,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 236264,
         role: "TANK",
         primary_stat: 1,
+        mastery_spell_ids: &[76671],
     },
     SpecInfo {
         id: 70,
@@ -75,6 +82,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135873,
         role: "DAMAGER",
         primary_stat: 1,
+        mastery_spell_ids: &[267316],
     },
     SpecInfo {
         id: 71,
@@ -85,6 +93,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 132355,
         role: "DAMAGER",
         primary_stat: 1,
+        mastery_spell_ids: &[1258398],
     },
     SpecInfo {
         id: 72,
@@ -95,6 +104,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 132347,
         role: "DAMAGER",
         primary_stat: 1,
+        mastery_spell_ids: &[76856],
     },
     SpecInfo {
         id: 73,
@@ -105,6 +115,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 132341,
         role: "TANK",
         primary_stat: 1,
+        mastery_spell_ids: &[76857],
     },
     SpecInfo {
         id: 102,
@@ -115,6 +126,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136096,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[393014],
     },
     SpecInfo {
         id: 103,
@@ -125,6 +137,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 132115,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[77493],
     },
     SpecInfo {
         id: 104,
@@ -135,6 +148,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 132276,
         role: "TANK",
         primary_stat: 2,
+        mastery_spell_ids: &[155783],
     },
     SpecInfo {
         id: 105,
@@ -145,6 +159,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136041,
         role: "HEALER",
         primary_stat: 4,
+        mastery_spell_ids: &[77495],
     },
     SpecInfo {
         id: 250,
@@ -155,6 +170,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135770,
         role: "TANK",
         primary_stat: 1,
+        mastery_spell_ids: &[77513],
     },
     SpecInfo {
         id: 251,
@@ -165,6 +181,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135773,
         role: "DAMAGER",
         primary_stat: 1,
+        mastery_spell_ids: &[77514],
     },
     SpecInfo {
         id: 252,
@@ -175,6 +192,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135775,
         role: "DAMAGER",
         primary_stat: 1,
+        mastery_spell_ids: &[77515],
     },
     SpecInfo {
         id: 253,
@@ -185,6 +203,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 461112,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[76657],
     },
     SpecInfo {
         id: 254,
@@ -195,6 +214,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 236179,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[193468],
     },
     SpecInfo {
         id: 255,
@@ -205,6 +225,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 461113,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[263135],
     },
     SpecInfo {
         id: 256,
@@ -215,6 +236,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 135940,
         role: "HEALER",
         primary_stat: 4,
+        mastery_spell_ids: &[271534],
     },
     SpecInfo {
         id: 257,
@@ -225,6 +247,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 237542,
         role: "HEALER",
         primary_stat: 4,
+        mastery_spell_ids: &[77485],
     },
     SpecInfo {
         id: 258,
@@ -235,6 +258,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136207,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[343690],
     },
     SpecInfo {
         id: 259,
@@ -245,6 +269,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 236270,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[76803],
     },
     SpecInfo {
         id: 260,
@@ -255,6 +280,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 236286,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[76806],
     },
     SpecInfo {
         id: 261,
@@ -265,6 +291,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 132320,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[76808],
     },
     SpecInfo {
         id: 262,
@@ -275,6 +302,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136048,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[168534],
     },
     SpecInfo {
         id: 263,
@@ -285,6 +313,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 237581,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[77223],
     },
     SpecInfo {
         id: 264,
@@ -295,6 +324,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136052,
         role: "HEALER",
         primary_stat: 4,
+        mastery_spell_ids: &[77226],
     },
     SpecInfo {
         id: 265,
@@ -305,6 +335,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136145,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[77215],
     },
     SpecInfo {
         id: 266,
@@ -315,6 +346,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136172,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[77219],
     },
     SpecInfo {
         id: 267,
@@ -325,6 +357,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 136186,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[77220],
     },
     SpecInfo {
         id: 268,
@@ -335,6 +368,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 608951,
         role: "TANK",
         primary_stat: 2,
+        mastery_spell_ids: &[117906],
     },
     SpecInfo {
         id: 269,
@@ -345,6 +379,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 608953,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[115636],
     },
     SpecInfo {
         id: 270,
@@ -355,6 +390,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 608952,
         role: "HEALER",
         primary_stat: 4,
+        mastery_spell_ids: &[117907],
     },
     SpecInfo {
         id: 577,
@@ -365,6 +401,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 1247264,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[185164],
     },
     SpecInfo {
         id: 581,
@@ -375,6 +412,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 1247265,
         role: "TANK",
         primary_stat: 2,
+        mastery_spell_ids: &[203747],
     },
     SpecInfo {
         id: 1467,
@@ -385,6 +423,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 4511811,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[362980],
     },
     SpecInfo {
         id: 1468,
@@ -395,6 +434,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 4511812,
         role: "HEALER",
         primary_stat: 4,
+        mastery_spell_ids: &[363510],
     },
     SpecInfo {
         id: 1473,
@@ -405,6 +445,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 5198700,
         role: "DAMAGER",
         primary_stat: 4,
+        mastery_spell_ids: &[406380],
     },
     SpecInfo {
         id: 1478,
@@ -415,6 +456,7 @@ pub const SPECS: &[SpecInfo] = &[
         icon_file_data_id: 2055034,
         role: "DAMAGER",
         primary_stat: 2,
+        mastery_spell_ids: &[],
     },
 ];
 

@@ -96,7 +96,7 @@ fn visualizer_manifest_records_runtime_stage_probes() {
         manifest.to_str().expect("manifest path should be UTF-8"),
         2560,
         1440,
-        0.53,
+        crate::render::texture::UI_SCALE,
         Some("__SCALPEL_VISUALIZER__"),
         &[],
     );
@@ -110,9 +110,23 @@ fn visualizer_manifest_records_runtime_stage_probes() {
     assert_eq!(payload["stage"]["physical_width"], 2560);
     assert_eq!(payload["stage"]["physical_height"], 1440);
     assert!((payload["stage"]["ui_scale"].as_f64().unwrap() - 0.53).abs() < 0.0001);
-    assert!((payload["stage"]["renderer_scale"].as_f64().unwrap() - 0.53).abs() < 0.0001);
-    assert!((payload["stage"]["logical_width"].as_f64().unwrap() - 2560.0 / 0.53).abs() < 0.01);
-    assert!((payload["stage"]["logical_height"].as_f64().unwrap() - 1440.0 / 0.53).abs() < 0.01);
+    assert!((payload["stage"]["renderer_scale"].as_f64().unwrap() - 1.0).abs() < 0.0001);
+    assert!(
+        (payload["stage"]["renderer_viewport_width"]
+            .as_f64()
+            .unwrap()
+            - 2560.0)
+            .abs()
+            < 0.01
+    );
+    assert!(
+        (payload["stage"]["renderer_viewport_height"]
+            .as_f64()
+            .unwrap()
+            - 1440.0)
+            .abs()
+            < 0.01
+    );
     assert_eq!(
         payload["stage"]["coordinate_spaces"]["physical"]["id"],
         "physical_pixels"
@@ -130,7 +144,7 @@ fn visualizer_manifest_records_runtime_stage_probes() {
         "renderer_viewport_units"
     );
     assert!((frame["logical_geometry"]["width"].as_f64().unwrap() - 106.0).abs() < 0.001);
-    assert!((frame["physical_geometry"]["width"].as_f64().unwrap() - 56.18).abs() < 0.001);
+    assert!((frame["physical_geometry"]["width"].as_f64().unwrap() - 106.0).abs() < 0.001);
     assert_eq!(frame["visible"], true);
     assert_physical_geometry_matches(frame);
     assert_eq!(frame["anchors"][0]["relative_to"], "UIParent");
@@ -181,7 +195,7 @@ fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() 
         manifest.to_str().expect("manifest path should be UTF-8"),
         2560,
         1440,
-        0.53,
+        crate::render::texture::UI_SCALE,
         None,
         &[display_id.to_string(), "Missing Aura".to_string()],
     );
@@ -220,8 +234,8 @@ fn manifest_resolves_exact_unnamed_weakauras_region_without_marker_heuristics() 
     );
     assert!((root["logical_geometry"]["width"].as_f64().unwrap() - 64.0 * 0.53).abs() < 0.001);
     assert!((root["logical_geometry"]["height"].as_f64().unwrap() - 48.0 * 0.53).abs() < 0.001);
-    assert!((root["width"].as_f64().unwrap() - 64.0 * 0.53 * 0.53).abs() < 0.001);
-    assert!((root["height"].as_f64().unwrap() - 48.0 * 0.53 * 0.53).abs() < 0.001);
+    assert!((root["width"].as_f64().unwrap() - 64.0 * 0.53).abs() < 0.001);
+    assert!((root["height"].as_f64().unwrap() - 48.0 * 0.53).abs() < 0.001);
     assert!((root["effective_scale"].as_f64().unwrap() - 0.53).abs() < 0.001);
     assert_physical_geometry_matches(root);
     assert_eq!(label["display_id"], display_id);

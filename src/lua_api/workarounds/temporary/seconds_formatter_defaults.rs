@@ -12,6 +12,15 @@ if type(SecondsFormatter) ~= "table" then
   }
 end
 
+if type(SecondsFormatter.IntervalDescription) ~= "table" then
+  SecondsFormatter.IntervalDescription = {
+    { formatString = { "%d sec" } },
+    { formatString = { "%d min" } },
+    { formatString = { "%d hr" } },
+    { formatString = { "%d day" } },
+  }
+end
+
 if type(SecondsFormatterMixin) ~= "table" then
   SecondsFormatterMixin = {}
 end

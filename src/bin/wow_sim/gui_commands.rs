@@ -59,37 +59,23 @@ fn headless_click_probe_plan(
     }
 }
 
-pub(super) fn dispatch_screenshot(dispatch: CommandDispatch) {
-    let Some(Commands::Screenshot {
-        output,
-        width,
-        height,
-        ui_scale,
-        filter,
-        crop,
-        dump_tree,
-        manifest,
-        requested_ids,
-    }) = dispatch.command
-    else {
-        unreachable!("dispatch_screenshot only fires for Commands::Screenshot");
-    };
+pub(super) fn dispatch_screenshot(dispatch: CommandDispatch, screenshot: super::ScreenshotArgs) {
     run_screenshot(
         &dispatch.env,
         &dispatch.font_system,
         ScreenshotCommand {
-            output,
-            width,
-            height,
-            ui_scale,
-            filter,
-            crop,
+            output: screenshot.output,
+            width: screenshot.width,
+            height: screenshot.height,
+            ui_scale: screenshot.ui_scale,
+            filter: screenshot.filter,
+            crop: screenshot.crop,
             delay: dispatch.delay,
             exec_lua: dispatch.exec_lua.as_deref(),
             exec_lua_secure: dispatch.exec_lua_secure,
-            dump_tree,
-            manifest,
-            requested_ids,
+            dump_tree: screenshot.dump_tree,
+            manifest: screenshot.manifest,
+            requested_ids: screenshot.requested_ids,
         },
     );
 }
@@ -262,7 +248,44 @@ pub(super) fn run_screenshot(
     font_system: &Rc<RefCell<WowFontSystem>>,
     command: ScreenshotCommand<'_>,
 ) {
-    prepare_screenshot_env(env, &command);
+    settle_headless_startup(env);
+    run_screenshot_capture(env, font_system, command);
+}
+
+pub(super) fn run_admin_screenshot(
+    env: &WowLuaEnv,
+    font_system: &Rc<RefCell<WowFontSystem>>,
+    screenshot: &super::ScreenshotArgs,
+    delay: Option<u64>,
+    exec_lua: Option<&str>,
+    exec_lua_secure: bool,
+) {
+    run_screenshot_capture(
+        env,
+        font_system,
+        ScreenshotCommand {
+            output: screenshot.output.clone(),
+            width: screenshot.width,
+            height: screenshot.height,
+            ui_scale: screenshot.ui_scale,
+            filter: screenshot.filter.clone(),
+            crop: screenshot.crop.clone(),
+            delay,
+            exec_lua,
+            exec_lua_secure,
+            dump_tree: screenshot.dump_tree.clone(),
+            manifest: screenshot.manifest.clone(),
+            requested_ids: screenshot.requested_ids.clone(),
+        },
+    );
+}
+
+fn run_screenshot_capture(
+    env: &WowLuaEnv,
+    font_system: &Rc<RefCell<WowFontSystem>>,
+    command: ScreenshotCommand<'_>,
+) {
+    prepare_screenshot_capture_env(env, &command);
     let (batch, glyph_atlas) = build_screenshot_batch(
         env,
         font_system,
@@ -285,7 +308,7 @@ pub(super) fn run_screenshot(
             &path.to_string_lossy(),
             command.width,
             command.height,
-            wow_ui_sim::render::texture::ui_scale(),
+            wow_ui_sim::render::texture::UI_SCALE,
             command.filter.as_deref(),
             &command.requested_ids,
         );
@@ -298,8 +321,7 @@ pub(super) fn run_screenshot(
     );
 }
 
-fn prepare_screenshot_env(env: &WowLuaEnv, command: &ScreenshotCommand<'_>) {
-    settle_headless_startup(env);
+fn prepare_screenshot_capture_env(env: &WowLuaEnv, command: &ScreenshotCommand<'_>) {
     if let Some(scale) = command.ui_scale
         && let Err(error) = env.set_ui_scale(scale)
     {

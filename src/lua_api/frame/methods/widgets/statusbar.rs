@@ -157,6 +157,48 @@ pub(super) fn set_status_bar_color(state: &mut LuaState) -> LuaResult<u32> {
     }
     Ok(0)
 }
+/// Set the foreground tint on the StatusBar's bar-texture child.
+///
+/// WeakAuras uses this API for AuraBar regions instead of
+/// `SetStatusBarColor`. Keep the state on the child because texture rendering
+/// consumes the child frame's gradient/color fields.
+pub(super) fn set_foreground_color(state: &mut LuaState) -> LuaResult<u32> {
+    let id = frame_id_from_stack(state, 1)?;
+    let Some(color) = rgba_from_stack(state, 2) else {
+        return Ok(0);
+    };
+    let bar_id = resolve_bar_id(state, id, Val::Nil)?;
+    let mut sim = borrow_state_mut(state)?;
+    if let Some(bar) = sim.widgets.get_mut_visual(bar_id) {
+        bar.gradient = None;
+        bar.vertex_color = Some(color);
+    }
+    Ok(0)
+}
+
+/// Set two foreground color stops on the StatusBar's bar-texture child.
+pub(super) fn set_foreground_gradient(state: &mut LuaState) -> LuaResult<u32> {
+    let id = frame_id_from_stack(state, 1)?;
+    let orientation = opt_string(state, 2).unwrap_or_else(|| "VERTICAL".to_string());
+    let Some(min_color) = rgba_from_stack(state, 3) else {
+        return Ok(0);
+    };
+    let Some(max_color) = rgba_from_stack(state, 7) else {
+        return Ok(0);
+    };
+    let bar_id = resolve_bar_id(state, id, Val::Nil)?;
+    let mut sim = borrow_state_mut(state)?;
+    if let Some(bar) = sim.widgets.get_mut_visual(bar_id) {
+        bar.gradient = Some(crate::widget::Gradient {
+            vertical: orientation.to_ascii_uppercase() != "HORIZONTAL",
+            min_color,
+            max_color,
+        });
+    }
+    Ok(0)
+}
+
+/// Set two foreground color stops on the StatusBar's bar-texture child.
 
 pub(super) fn get_status_bar_color(state: &mut LuaState) -> LuaResult<u32> {
     let id = frame_id_from_stack(state, 1)?;
@@ -400,7 +442,7 @@ pub(super) fn get_status_bar_desaturated(state: &mut LuaState) -> LuaResult<u32>
 // register_statusbar
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "client-ptr")]
+#[cfg(feature = "retail-12-1-0")]
 fn set_render_mode(state: &mut LuaState) -> LuaResult<u32> {
     let id = crate::lua_api::methods::frame_id_from_stack(state, 1)?;
     let fields = crate::lua_api::methods::get_or_create_frame_fields(state, id);
@@ -412,7 +454,7 @@ fn set_render_mode(state: &mut LuaState) -> LuaResult<u32> {
     Ok(0)
 }
 
-#[cfg(feature = "client-ptr")]
+#[cfg(feature = "retail-12-1-0")]
 fn get_render_mode(state: &mut LuaState) -> LuaResult<u32> {
     let id = crate::lua_api::methods::frame_id_from_stack(state, 1)?;
     let fields = crate::lua_api::methods::get_or_create_frame_fields(state, id);
@@ -433,6 +475,8 @@ const STATUSBAR_METHODS: &[(&'static str, rilua::vm::closure::RustFn)] = &[
     ("SetStatusBarTexture", set_status_bar_texture),
     ("GetStatusBarTexture", get_status_bar_texture),
     ("GetStatusBarColor", get_status_bar_color),
+    ("SetForegroundColor", set_foreground_color),
+    ("SetForegroundGradient", set_foreground_gradient),
     // Fill direction / reverse
     ("SetFillStyle", set_fill_style),
     ("GetFillStyle", get_fill_style),
@@ -445,9 +489,9 @@ const STATUSBAR_METHODS: &[(&'static str, rilua::vm::closure::RustFn)] = &[
     ("SetTimerDuration", set_timer_duration),
     ("GetTimerDuration", get_timer_duration),
     // Render mode
-    #[cfg(feature = "client-ptr")]
+    #[cfg(feature = "retail-12-1-0")]
     ("SetRenderMode", set_render_mode),
-    #[cfg(feature = "client-ptr")]
+    #[cfg(feature = "retail-12-1-0")]
     ("GetRenderMode", get_render_mode),
     // Desaturation
     ("SetStatusBarDesaturated", set_desaturated),

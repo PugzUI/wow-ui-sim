@@ -71,6 +71,28 @@ The install close-button hitbox error was a coordinate-space mismatch. Layout re
 
 The remaining installer/raid-control placement issue was a startup-state mismatch, not an ElvUI-specific anchor bug. `runtime_surface_bootstrap.lua` exposed `GetScreenWidth()`, `GetScreenHeight()`, and `GetPhysicalScreenSize()` as 1024x768 before `set_screen_size()` runs, but `SimState` seeded `UIParent` and `WorldFrame` with 1600x1200. ElvUI sized `ElvUIParent` from the 1024x768 screen globals, then anchored it inside the larger 1600x1200 `UIParent`, offsetting descendants and their click targets. The default `SimState` screen dimensions now match the bootstrap 1024x768 physical screen; the regression checks that a fresh env reports matching screen globals and `UIParent` size.
 
+### Visualizer Half-Size Panel
+
+The Mists WeakAuras panel could render at roughly half size even though the
+runtime reported the expected `UIParent` effective scale of `0.53`. The Iced
+viewport scale factor was `1.0`; the mismatch was in the simulator's
+coordinate pipeline.
+
+Layout resolution already applies frame effective scale to `LayoutRect`. The
+Visualizer then applied `ui_scale()` a second time while emitting quads,
+building hit rectangles, resolving line and mask geometry, and serializing
+manifest physical geometry. A direct UIParent child was therefore reduced by
+`0.53 × 0.53` instead of by `0.53` once.
+
+The native/headless Visualizer stage now uses a 1:1 renderer viewport: all
+those paths consume resolved `LayoutRect` values directly, while the manifest
+records `renderer_scale: 1.0`. The existing frame effective scale remains in
+layout, so this changes the renderer boundary without changing WoW API scale
+semantics. The focused GPU regression in
+`tests/visualizer_coordinate_raster.rs` verifies a 64x48 direct UIParent
+child lands at `(40,30)` scaled once, and the screenshot manifest tests verify
+the matching physical geometry.
+
 ## Sources
 
 - [shared_bootstrap.lua](../../../src/lua_api/env_init/shared_bootstrap.lua) — trim alias compatibility
@@ -84,6 +106,10 @@ The remaining installer/raid-control placement issue was a startup-state mismatc
 - [env_runtime.rs](../../../src/lua_api/env_runtime.rs) — runtime screen-size globals and resize event dispatch
 - [state.rs](../../../src/lua_api/state.rs) — default backing screen dimensions for built-in root frames
 - [frame_collect.rs](../../../src/iced_app/frame_collect.rs) — scaled hit-rect inset conversion for hit testing
+- [strata_emit.rs](../../../src/iced_app/strata_emit.rs) — native renderer viewport geometry and hit rectangles
+- [rebuild.rs](../../../src/iced_app/render/rebuild.rs) — native strata batch emission
+- [visualizer_coordinate_raster.rs](../../../tests/visualizer_coordinate_raster.rs) — once-scaled GPU raster regression
+- [scaling-coordinates.md](../design/scaling-coordinates.md) — coordinate-space contract
 - [mists/post_load.lua](../../../src/mists/post_load.lua) — Mists `RedockChatWindows` compatibility
 - [PLAN.md](../../../PLAN.md) — remaining Mists full-addon error list
 

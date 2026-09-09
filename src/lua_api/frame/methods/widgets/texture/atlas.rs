@@ -1,6 +1,6 @@
 //! Atlas and texture-resolve methods.
 
-use super::super::shared::opt_bool;
+use super::super::shared::{opt_bool, opt_string};
 use crate::lua_api::methods::{
     borrow_state, borrow_state_mut, create_string, frame_id_from_stack, val_to_string,
 };
@@ -266,6 +266,10 @@ pub(super) fn set_texture(state: &mut LuaState) -> LuaResult<u32> {
     let texture_val = stack_val(state, 2);
     let horiz_tile = opt_bool(state, 3);
     let vert_tile = opt_bool(state, 4);
+    let clamp_to_black = [3, 4]
+        .into_iter()
+        .filter_map(|index| opt_string(state, index))
+        .any(|mode| is_clamp_to_black_mode(&mode));
     let mut sim = borrow_state_mut(state)?;
     let mut order_changed = false;
     if let Some(frame) = sim.widgets.get_mut_visual(id) {
@@ -278,6 +282,7 @@ pub(super) fn set_texture(state: &mut LuaState) -> LuaResult<u32> {
         frame.texture = path;
         frame.texture_file_data_id = file_data_id;
         frame.color_texture = None;
+        frame.clamp_to_black = clamp_to_black;
         clear_atlas_owned_tex_coords(frame);
         frame.atlas = None;
         frame.atlas_tex_coords = None;
@@ -291,6 +296,25 @@ pub(super) fn set_texture(state: &mut LuaState) -> LuaResult<u32> {
         sim.invalidate_strata_buckets();
     }
     Ok(0)
+}
+
+fn is_clamp_to_black_mode(mode: &str) -> bool {
+    mode.eq_ignore_ascii_case("CLAMPTOBLACKADDITIVE")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_clamp_to_black_mode;
+
+    #[test]
+    fn set_texture_wrap_parsing_is_case_insensitive_and_narrow() {
+        assert!(is_clamp_to_black_mode("CLAMPTOBLACKADDITIVE"));
+        assert!(is_clamp_to_black_mode(
+            "clamp to black additive".replace(' ', "").as_str()
+        ));
+        assert!(!is_clamp_to_black_mode("CLAMP"));
+        assert!(!is_clamp_to_black_mode("ADD"));
+    }
 }
 
 fn texture_has_render_source(frame: &crate::widget::Frame) -> bool {
@@ -336,6 +360,7 @@ fn clear_atlas_owned_tex_coords(frame: &mut crate::widget::Frame) {
     }
     if frame.tex_coords == frame.atlas_tex_coords {
         frame.tex_coords = None;
+        frame.local_tex_coords = None;
     }
 }
 
@@ -363,7 +388,8 @@ fn resolve_texture_string(state: &LuaState, value: Val) -> (Option<String>, Opti
         return (None, None);
     }
     let Ok(file_data_id) = raw.parse::<u32>() else {
-        return (Some(raw), None);
+        let file_data_id = crate::limited_listfile::lookup_texture_path(&raw);
+        return (Some(raw), file_data_id.map(i64::from));
     };
     (
         Some(resolve_file_data_id_path(file_data_id)),

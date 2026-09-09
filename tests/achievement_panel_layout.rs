@@ -69,9 +69,11 @@ const ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA: &str = r#"
         return "achievement_frame_anchor_mismatch"
     end
 
-    local close_rect, close_err = expect_rect(AchievementFrameCloseButton, "achievement_close_button", 840, 628, 24, 24)
+    -- Cata/Blizzard_AchievementUI.xml uses Classic UIPanelCloseButton (32px)
+    -- at (3, 4); Mainline uses a 24px button at (0, 0).
+    local close_rect, close_err = expect_rect(AchievementFrameCloseButton, "achievement_close_button", isMists and 835 or 840, isMists and 624 or 628, isMists and 32 or 24, isMists and 32 or 24)
     if not close_rect then return close_err end
-    if not has_point(AchievementFrameCloseButton, "TOPRIGHT", AchievementFrame, "TOPRIGHT", 0, 0, 0.1) then
+    if not has_point(AchievementFrameCloseButton, "TOPRIGHT", AchievementFrame, "TOPRIGHT", isMists and 3 or 0, isMists and 4 or 0, 0.1) then
         return "achievement_close_button_anchor_mismatch"
     end
 
@@ -83,7 +85,7 @@ const ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA: &str = r#"
         "achievement_categories",
         117,
         172,
-        175,
+        isMists and 197 or 175,
         461
     )
     if not categories_rect then return categories_err end
@@ -110,7 +112,7 @@ const ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA: &str = r#"
         return "achievement_categories_bg_bottom_anchor_mismatch"
     end
 
-    local background = AchievementFrame.Background
+    local background = isMists and AchievementFrameBackground or AchievementFrame.Background
     local bg_rect, bg_err = expect_rect(background, "achievement_background", 112, 168, 736, 468)
     if not bg_rect then return bg_err end
     if not has_point(background, "TOPLEFT", AchievementFrame, "TOPLEFT", 16, -16, 0.1) then
@@ -120,22 +122,24 @@ const ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA: &str = r#"
         return "achievement_background_bottom_anchor_mismatch"
     end
 
-    local header_rect, header_err = expect_rect(AchievementFrame.Header, "achievement_header", 122, 614, 726, 106)
+    local header = isMists and AchievementFrameHeader or AchievementFrame.Header
+    local header_rect, header_err = expect_rect(header, "achievement_header", 122, isMists and 613 or 614, 726, 106)
     if not header_rect then return header_err end
-    if not has_point(AchievementFrame.Header, "BOTTOMLEFT", AchievementFrame, "TOPLEFT", 26, -38, 0.1) then
+    if not has_point(header, "BOTTOMLEFT", AchievementFrame, "TOPLEFT", 26, isMists and -39 or -38, 0.1) then
         return "achievement_header_anchor_mismatch"
     end
 
+    local scrollbox = isMists and AchievementFrameCategoriesContainer or AchievementFrameCategories.ScrollBox
     local scrollbox_rect, scrollbox_err = expect_rect(
-        AchievementFrameCategories.ScrollBox,
+        scrollbox,
         "achievement_categories_scrollbox",
         117,
         177,
-        175,
+        isMists and 197 or 175,
         451
     )
     if not scrollbox_rect then return scrollbox_err end
-    if not AchievementFrameCategories.ScrollBox:IsShown() then
+    if not scrollbox:IsShown() then
         return "achievement_categories_scrollbox_hidden"
     end
 
@@ -158,7 +162,7 @@ const ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA: &str = r#"
         AchievementFrameSummaryCategoriesStatusBar,
         "achievement_summary_categories_status_bar",
         335,
-        372,
+        isMists and 348 or 372,
         488,
         21
     )
@@ -179,7 +183,12 @@ const ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA: &str = r#"
 fn achievement_frame_layout_stays_locked() {
     test_timeout! {
         let env = common::panel_fixtures::setup_env();
-        let result: String = env.eval(ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA).unwrap();
+        let assertions = format!(
+            "local isMists = {}\n{}",
+            cfg!(feature = "client-mists"),
+            ACHIEVEMENT_LAYOUT_ASSERTIONS_LUA
+        );
+        let result: String = env.eval(&assertions).unwrap();
         assert_eq!(
             result, "ok",
             "AchievementFrame layout should remain locked after ToggleAchievementFrame(): {result}"

@@ -1,6 +1,6 @@
 //! Rotation, mask, gradient, visuals, and sprite sheet methods.
 
-use super::super::shared::{opt_f32, opt_string};
+use super::super::shared::{opt_f32, opt_string, rgba_from_stack};
 use super::color::color_from_table;
 use crate::lua_api::methods::val_to_string;
 use crate::lua_api::methods::{
@@ -111,6 +111,30 @@ pub(super) fn set_gradient(state: &mut LuaState) -> LuaResult<u32> {
     if let Some(frame) = sim.widgets.get_mut_visual(id) {
         frame.gradient = Some(crate::widget::Gradient {
             vertical,
+            min_color,
+            max_color,
+        });
+    }
+    Ok(0)
+}
+
+/// Set a horizontal/vertical gradient using WoW's scalar color signature.
+///
+/// WeakAuras' AuraBar wrapper forwards `SetForegroundGradient` to the
+/// foreground Texture as `SetGradientAlpha`.
+pub(super) fn set_gradient_alpha(state: &mut LuaState) -> LuaResult<u32> {
+    let id = frame_id_from_stack(state, 1)?;
+    let orientation = opt_string(state, 2).unwrap_or_else(|| "VERTICAL".to_string());
+    let Some(min_color) = rgba_from_stack(state, 3) else {
+        return Ok(0);
+    };
+    let Some(max_color) = rgba_from_stack(state, 7) else {
+        return Ok(0);
+    };
+    let mut sim = borrow_state_mut(state)?;
+    if let Some(frame) = sim.widgets.get_mut_visual(id) {
+        frame.gradient = Some(crate::widget::Gradient {
+            vertical: orientation.to_ascii_uppercase() != "HORIZONTAL",
             min_color,
             max_color,
         });

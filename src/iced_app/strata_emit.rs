@@ -6,7 +6,6 @@ use rustc_hash::FxHashSet;
 use crate::render::QuadBatch;
 use crate::render::font::WowFontSystem;
 use crate::render::glyph::GlyphAtlas;
-use crate::render::texture::ui_scale;
 use crate::widget::WidgetRegistry;
 use crate::widget::WidgetType;
 
@@ -220,11 +219,7 @@ fn resolve_line_endpoint_position(
     let target_id = anchor.target_id?;
     let rect = registry.get(target_id)?.layout_rect?;
     let (ax, ay) = anchor_position(anchor.point, rect.x, rect.y, rect.width, rect.height);
-    let ui_scale = crate::render::texture::ui_scale();
-    Some((
-        (ax + anchor.x_offset) * ui_scale,
-        (ay - anchor.y_offset) * ui_scale,
-    ))
+    Some((ax + anchor.x_offset, ay - anchor.y_offset))
 }
 
 fn has_renderable_rect(
@@ -361,10 +356,9 @@ fn intersect_rects(a: crate::LayoutRect, b: crate::LayoutRect) -> Option<crate::
 }
 
 fn layout_rect_to_screen_rect(rect: crate::LayoutRect) -> Rectangle {
-    let physical = crate::render::coordinates::renderer_rect_to_physical(rect, ui_scale());
     Rectangle::new(
-        Point::new(physical.x, physical.y),
-        Size::new(physical.width, physical.height),
+        Point::new(rect.x, rect.y),
+        Size::new(rect.width, rect.height),
     )
 }
 
@@ -469,7 +463,7 @@ pub fn build_quad_batch_for_registry_with_quest_blobs(
 pub fn build_hittable_rects(
     collected: &CollectedFrames,
     registry: &crate::widget::WidgetRegistry,
-) -> Vec<(u64, Rectangle, super::hit_grid::HitOrderKey)> {
+) -> Vec<(u64, Rectangle, super::frame_collect::HitOrderKey)> {
     collected
         .hittable
         .iter()
@@ -481,11 +475,8 @@ pub fn build_hittable_rects(
             (
                 id,
                 Rectangle::new(
-                    Point::new((r.x + il) * ui_scale(), (r.y + it) * ui_scale()),
-                    Size::new(
-                        (r.width - il - ir).max(0.0) * ui_scale(),
-                        (r.height - it - ib).max(0.0) * ui_scale(),
-                    ),
+                    Point::new(r.x + il, r.y + it),
+                    Size::new((r.width - il - ir).max(0.0), (r.height - it - ib).max(0.0)),
                 ),
                 key,
             )

@@ -65,6 +65,12 @@ pub fn default_addons_path() -> PathBuf {
 }
 
 pub fn default_addons_paths() -> Vec<PathBuf> {
+    // An explicit test root is exclusive. This prevents a simulator run
+    // configured for an isolated addon tree from silently importing addons
+    // from the installed WoW client or bundled development directories.
+    if let Some(path) = env_path("WOW_SIM_ADDONS_PATH") {
+        return existing_unique_paths(vec![path]);
+    }
     let install_root = first_existing_path(wow_install_roots());
     existing_unique_paths(addons_path_candidates(install_root.as_ref()))
 }

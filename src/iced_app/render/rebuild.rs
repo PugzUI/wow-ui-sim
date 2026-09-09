@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use crate::render::font::WowFontSystem;
 use crate::render::glyph::GlyphAtlas;
-use crate::render::texture::ui_scale;
 use crate::render::{FrameQuadSnapshot, QuadBatch};
 use crate::widget::{FrameStrata, WidgetType};
 
+use super::super::frame_collect::collect_subtree_ids;
 use super::super::quad_builders::{FrameQuadEmit, emit_frame_quads};
 use super::super::statusbar::collect_statusbar_fills;
 use super::super::strata_emit::build_render_list;
@@ -31,6 +31,10 @@ pub struct DirtyStrataRebuildParams<'a> {
     pub tooltip_data: &'a HashMap<u64, TooltipRenderData>,
     pub quest_blobs: &'a HashMap<u64, crate::lua_api::state::QuestBlobState>,
     pub elapsed_secs: f64,
+    /// Optional named subtree to include in the cached raster. The Visualizer
+    /// uses its sentinel root so Blizzard FrameXML remains available to Lua
+    /// while only addon-owned frames reach the image.
+    pub root_name: Option<&'a str>,
 }
 
 /// Rebuild strata batches for all dirty strata indices.
@@ -79,7 +83,7 @@ impl<'a> RebuildStrataBatches<'a> {
         EmitStrataCached {
             bucket,
             dirty_ids: self.dirty_ids,
-            screen_size: (self.size.width / ui_scale(), self.size.height / ui_scale()),
+            screen_size: (self.size.width, self.size.height),
             ctx: self.ctx,
         }
     }
@@ -94,6 +98,7 @@ struct StrataRenderContext<'a> {
     tooltip_data: &'a HashMap<u64, TooltipRenderData>,
     quest_blobs: &'a HashMap<u64, crate::lua_api::state::QuestBlobState>,
     elapsed_secs: f64,
+    visible_ids: Option<&'a FxHashSet<u64>>,
 }
 
 struct EmitStrataCached<'a> {
@@ -232,8 +237,8 @@ fn scaled_bounds(entry: RenderListEntry) -> (Rectangle, Option<Rectangle>) {
 
 fn scale_layout_rect(rect: crate::LayoutRect) -> Rectangle {
     Rectangle::new(
-        Point::new(rect.x * ui_scale(), rect.y * ui_scale()),
-        Size::new(rect.width * ui_scale(), rect.height * ui_scale()),
+        Point::new(rect.x, rect.y),
+        Size::new(rect.width, rect.height),
     )
 }
 
@@ -257,7 +262,10 @@ fn emit_strata_cached(
     text_ctx: &mut Option<(&mut WowFontSystem, &mut GlyphAtlas)>,
     params: EmitStrataCached<'_>,
 ) -> EmitStats {
-    let render_list = build_render_list(params.bucket, params.ctx.registry, params.screen_size);
+    let mut render_list = build_render_list(params.bucket, params.ctx.registry, params.screen_size);
+    if let Some(visible_ids) = params.ctx.visible_ids {
+        render_list.retain(|entry| visible_ids.contains(&entry.0));
+    }
     let statusbar_fills = collect_statusbar_fills(&render_list, params.ctx.registry);
     let mut stats = EmitStats {
         cached: 0,
@@ -488,6 +496,9 @@ pub fn rebuild_dirty_strata_batches_for_registry(
     text_ctx: &mut Option<(&mut WowFontSystem, &mut GlyphAtlas)>,
     params: DirtyStrataRebuildParams<'_>,
 ) {
+    let visible_ids = params
+        .root_name
+        .map(|root_name| collect_subtree_ids(params.widgets, root_name));
     rebuild_strata_batches(
         strata_cache,
         snapshot_cache,
@@ -505,6 +516,7 @@ pub fn rebuild_dirty_strata_batches_for_registry(
                 tooltip_data: params.tooltip_data,
                 quest_blobs: params.quest_blobs,
                 elapsed_secs: params.elapsed_secs,
+                visible_ids: visible_ids.as_ref(),
             },
         },
     );

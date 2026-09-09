@@ -59,7 +59,7 @@ impl App {
             Message::CommandInputChanged(input) => self.command_input = input,
             Message::ExecuteCommand => self.handle_execute_command(),
             Message::ScreenshotTaken(ss) => self.handle_screenshot_taken(ss),
-            Message::FpsTick => {}
+            Message::FpsTick | Message::IpcReady => {}
             Message::InspectorClose
             | Message::InspectorWidthChanged(_)
             | Message::InspectorHeightChanged(_)

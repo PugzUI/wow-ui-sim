@@ -351,6 +351,60 @@ fn test_vertex_offset_all_four_corners() {
     assert_eq!((x4, y4), (7.0, 8.0));
 }
 
+#[test]
+fn test_vertex_offset_constants_are_numeric_and_apply_in_native_order() {
+    let env = env();
+    let (
+        constants_match,
+        upper_left_type,
+        lower_left_type,
+        upper_right_type,
+        lower_right_type,
+        ulx,
+        uly,
+        llx,
+        lly,
+        urx,
+        ury,
+        lrx,
+        lry,
+    ): (bool, String, String, String, String, f64, f64, f64, f64, f64, f64, f64, f64) = env
+        .eval(
+            r#"
+            local tex = CreateFrame("Frame"):CreateTexture()
+            tex:SetVertexOffset(UPPER_LEFT_VERTEX,  1,  2)
+            tex:SetVertexOffset(LOWER_LEFT_VERTEX,  3,  4)
+            tex:SetVertexOffset(UPPER_RIGHT_VERTEX, 5,  6)
+            tex:SetVertexOffset(LOWER_RIGHT_VERTEX, 7,  8)
+            local ulx, uly = tex:GetVertexOffset(UPPER_LEFT_VERTEX)
+            local llx, lly = tex:GetVertexOffset(LOWER_LEFT_VERTEX)
+            local urx, ury = tex:GetVertexOffset(UPPER_RIGHT_VERTEX)
+            local lrx, lry = tex:GetVertexOffset(LOWER_RIGHT_VERTEX)
+            return UPPER_LEFT_VERTEX == 1 and LOWER_LEFT_VERTEX == 2
+                   and UPPER_RIGHT_VERTEX == 3 and LOWER_RIGHT_VERTEX == 4,
+                   type(UPPER_LEFT_VERTEX), type(LOWER_LEFT_VERTEX),
+                   type(UPPER_RIGHT_VERTEX), type(LOWER_RIGHT_VERTEX),
+                   ulx, uly, llx, lly, urx, ury, lrx, lry
+            "#,
+        )
+        .unwrap();
+
+    assert!(constants_match);
+    assert_eq!(
+        (
+            upper_left_type,
+            lower_left_type,
+            upper_right_type,
+            lower_right_type
+        ),
+        ("number".into(), "number".into(), "number".into(), "number".into())
+    );
+    assert_eq!((ulx, uly), (1.0, 2.0));
+    assert_eq!((llx, lly), (3.0, 4.0));
+    assert_eq!((urx, ury), (5.0, 6.0));
+    assert_eq!((lrx, lry), (7.0, 8.0));
+}
+
 // ---------------------------------------------------------------------------
 // 13. ResetTexCoord
 // ---------------------------------------------------------------------------

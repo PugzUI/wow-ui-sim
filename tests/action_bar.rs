@@ -1,4 +1,5 @@
-//! Integration tests for main action bar visibility after startup.
+//! Retail action bar layout. Mists uses its own classic layout fixture.
+#![cfg(feature = "client-retail")]
 
 use crate::common;
 

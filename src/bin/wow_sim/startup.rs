@@ -63,12 +63,19 @@ fn configure_screen_size(env: &WowLuaEnv, args: &Args) -> Result<(), Box<dyn Err
 fn command_screen_geometry(command: &Option<Commands>) -> (f32, f32, Option<f32>) {
     match command {
         #[cfg(feature = "gui")]
-        Some(Commands::Screenshot {
-            width,
-            height,
-            ui_scale,
-            ..
-        }) => (*width as f32, *height as f32, *ui_scale),
+        Some(Commands::Screenshot { screenshot }) => (
+            screenshot.width as f32,
+            screenshot.height as f32,
+            screenshot.ui_scale,
+        ),
+        #[cfg(feature = "gui")]
+        Some(Commands::Admin {
+            command: super::AdminCommand::WeakAurasScreenshot { screenshot, .. },
+        }) => (
+            screenshot.width as f32,
+            screenshot.height as f32,
+            screenshot.ui_scale,
+        ),
         Some(Commands::DumpTree { width, height, .. }) => (*width as f32, *height as f32, None),
         None => default_screen_geometry(wow_ui_sim::render::texture::visualizer_mode()),
         _ => (1600.0, 1200.0, None),
@@ -174,7 +181,7 @@ fn load_startup_addons(
     startup_trace::time_load_step("prepare chat frame for third-party addons", || {
         wow_ui_sim::lua_api::chat_init::prepare_for_third_party_addons(env)
     });
-    #[cfg(feature = "client-mists")]
+    #[cfg(any(feature = "client-mists", feature = "retail-12-1-0"))]
     startup_trace::time_load_step("apply post-Blizzard load workarounds", || {
         apply_post_load_workarounds(env)
     });
@@ -182,6 +189,7 @@ fn load_startup_addons(
         addon_loading::load_third_party_addons(
             args.skip_addons(),
             args.is_test_command(),
+            args.is_admin_command(),
             env,
             saved_vars,
             screen,

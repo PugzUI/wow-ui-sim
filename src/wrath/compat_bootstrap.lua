@@ -39,24 +39,6 @@ if FCF_DockUpdate == nil then
   end
 end
 
-if FillLocalizedClassList == nil then
-  function FillLocalizedClassList(classTable)
-    if type(classTable) ~= "table" then
-      return
-    end
-    -- Populate with minimal wrath class stubs so iterators don't crash.
-    local classes = {
-      "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST",
-      "SHAMAN", "MAGE", "WARLOCK", "DRUID", "DEATHKNIGHT",
-    }
-    for _, class in ipairs(classes) do
-      if classTable[class] == nil then
-        classTable[class] = class
-      end
-    end
-  end
-end
-
 if GetActionBarPage == nil then
   function GetActionBarPage()
     return 1

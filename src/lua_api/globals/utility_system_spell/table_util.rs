@@ -1,4 +1,4 @@
-//! C_TableUtil and tInvert implementations.
+//! C_TableUtil, tCompare, and tInvert implementations.
 
 use crate::lua_api::methods::table_get_static;
 use crate::lua_bridge::{stack_val, table_set_rust_fn_static};
@@ -27,6 +27,209 @@ pub fn t_invert(state: &mut LuaState) -> LuaResult<u32> {
     insert_inverted_hash(state, inverted_ref, hash_entries);
     state.push(Val::Table(inverted_ref));
     Ok(1)
+}
+
+/// tCompare(lhsTable, rhsTable [, depth]) — compare table entries recursively.
+pub fn t_compare(state: &mut LuaState) -> LuaResult<u32> {
+    let left = stack_val(state, 1);
+    let right = stack_val(state, 2);
+    let depth = match stack_val(state, 3) {
+        // Lua's `depth = depth or 1`: nil and false both select the default,
+        // while other values are deliberately left untouched until a nested
+        // table comparison evaluates `depth > 1`.
+        Val::Nil | Val::Bool(false) => Val::Num(1.0),
+        value => value,
+    };
+    let (Val::Table(left_ref), Val::Table(right_ref)) = (left, right) else {
+        let argument = if !matches!(left, Val::Table(_)) { 1 } else { 2 };
+        let value = if argument == 1 { left } else { right };
+        return Err(LuaError::Runtime(RuntimeError {
+            message: format!(
+                "bad argument #{argument} to 'tCompare' (table expected, got {})",
+                value.type_name()
+            ),
+            level: 0,
+            traceback: vec![],
+        }));
+    };
+    let result = compare_tables(state, left_ref, right_ref, depth)?;
+    state.push(Val::Bool(result));
+    Ok(1)
+}
+
+fn compare_tables(
+    state: &mut LuaState,
+    left_ref: rilua::vm::gc::arena::GcRef<Table>,
+    right_ref: rilua::vm::gc::arena::GcRef<Table>,
+    depth: Val,
+) -> LuaResult<bool> {
+    let left_entries = state
+        .gc
+        .tables
+        .get(left_ref)
+        .map(|table| {
+            let mut entries = Vec::new();
+            let mut key = Val::Nil;
+            while let Some((next_key, value)) = table.next(key, &state.gc.string_arena)? {
+                entries.push((next_key, value));
+                key = next_key;
+            }
+            Ok::<_, LuaError>(entries)
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    for (key, left_value) in left_entries {
+        let right_value = lua_gettable(state, Val::Table(right_ref), key)?;
+        if !compare_values(state, left_value, right_value, depth)? {
+            return Ok(false);
+        }
+    }
+
+    let right_keys = state
+        .gc
+        .tables
+        .get(right_ref)
+        .map(|table| {
+            let mut keys = Vec::new();
+            let mut key = Val::Nil;
+            while let Some((next_key, _)) = table.next(key, &state.gc.string_arena)? {
+                keys.push(next_key);
+                key = next_key;
+            }
+            Ok::<_, LuaError>(keys)
+        })
+        .transpose()?
+        .unwrap_or_default();
+    for key in right_keys {
+        if lua_gettable(state, Val::Table(left_ref), key)?.is_nil() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn compare_values(state: &mut LuaState, left: Val, right: Val, depth: Val) -> LuaResult<bool> {
+    match (left, right) {
+        // At shallow depth, tables compare equal by type, not identity.
+        (Val::Table(left_ref), Val::Table(right_ref)) => {
+            if depth_greater_than_one(state, depth)? {
+                let next_depth = decrement_depth(state, depth)?;
+                compare_tables(state, left_ref, right_ref, next_depth)
+            } else {
+                Ok(true)
+            }
+        }
+        (Val::Table(_), _) | (_, Val::Table(_)) => Ok(false),
+        // Lua ~= is the negation of Lua equality, including shared __eq.
+        (left, right) => state.api_equal(left, right),
+    }
+}
+
+fn depth_greater_than_one(state: &mut LuaState, depth: Val) -> LuaResult<bool> {
+    if let Some(metamethod) = value_metamethod(state, depth, b"__lt")? {
+        if matches!(metamethod, Val::Function(_)) {
+            return Ok(call_lua_function(state, metamethod, &[Val::Num(1.0), depth])?.is_truthy());
+        }
+    }
+    state.api_lessthan(Val::Num(1.0), depth)
+}
+
+fn lua_gettable(state: &mut LuaState, table: Val, key: Val) -> LuaResult<Val> {
+    let mut current = table;
+    for _ in 0..100 {
+        let Val::Table(table_ref) = current else {
+            return Err(index_error(current));
+        };
+        let result = state
+            .gc
+            .tables
+            .get(table_ref)
+            .map_or(Val::Nil, |table| table.get(key, &state.gc.string_arena));
+        if !result.is_nil() {
+            return Ok(result);
+        }
+        let Some(metamethod) = table_metamethod(state, table_ref, b"__index")? else {
+            return Ok(Val::Nil);
+        };
+        if matches!(metamethod, Val::Function(_)) {
+            return call_lua_function(state, metamethod, &[current, key]);
+        }
+        current = metamethod;
+    }
+    Err(runtime_error("loop in gettable"))
+}
+
+fn decrement_depth(state: &mut LuaState, depth: Val) -> LuaResult<Val> {
+    if let Val::Num(value) = depth {
+        return Ok(Val::Num(value - 1.0));
+    }
+    let Some(metamethod) = value_metamethod(state, depth, b"__sub")? else {
+        return Err(arithmetic_error(depth));
+    };
+    if !matches!(metamethod, Val::Function(_)) {
+        return Err(arithmetic_error(depth));
+    }
+    call_lua_function(state, metamethod, &[depth, Val::Num(1.0)])
+}
+
+fn value_metamethod(state: &mut LuaState, value: Val, name: &[u8]) -> LuaResult<Option<Val>> {
+    let Val::Table(table_ref) = value else {
+        return Ok(None);
+    };
+    table_metamethod(state, table_ref, name)
+}
+
+fn table_metamethod(
+    state: &mut LuaState,
+    table_ref: rilua::vm::gc::arena::GcRef<Table>,
+    name: &[u8],
+) -> LuaResult<Option<Val>> {
+    let Some(table) = state.gc.tables.get(table_ref) else {
+        return Err(runtime_error("invalid table reference"));
+    };
+    let Some(metatable_ref) = table.metatable() else {
+        return Ok(None);
+    };
+    let key = state.gc.intern_string(name);
+    Ok(state.gc.tables.get(metatable_ref).and_then(|mt| {
+        let value = mt.get(Val::Str(key), &state.gc.string_arena);
+        (!value.is_nil()).then_some(value)
+    }))
+}
+
+fn index_error(value: Val) -> LuaError {
+    runtime_error(&format!("attempt to index a {} value", value.type_name()))
+}
+
+fn call_lua_function(state: &mut LuaState, function: Val, args: &[Val]) -> LuaResult<Val> {
+    let saved_top = state.top;
+    let base = state.top;
+    state.ensure_stack(base + args.len() + 2);
+    state.stack_set(base, function);
+    for (index, arg) in args.iter().copied().enumerate() {
+        state.stack_set(base + index + 1, arg);
+    }
+    state.top = base + args.len() + 1;
+    state.call_function(base, 1)?;
+    let result = state.stack_get(base);
+    state.top = saved_top;
+    Ok(result)
+}
+
+fn arithmetic_error(value: Val) -> LuaError {
+    runtime_error(&format!(
+        "attempt to perform arithmetic on a {} value",
+        value.type_name()
+    ))
+}
+
+fn runtime_error(message: &str) -> LuaError {
+    LuaError::Runtime(RuntimeError {
+        message: message.to_string(),
+        level: 0,
+        traceback: vec![],
+    })
 }
 
 fn collect_table_entries(

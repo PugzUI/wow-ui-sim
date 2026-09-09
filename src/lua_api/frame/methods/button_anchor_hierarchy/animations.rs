@@ -14,12 +14,13 @@ pub(super) use creation::{
     set_scale_dispatch,
 };
 pub(super) use fields::{
-    animation_get_duration, animation_get_flipbook_columns, animation_get_flipbook_frame_height,
-    animation_get_flipbook_frame_width, animation_get_flipbook_frames, animation_get_flipbook_rows,
-    animation_set_duration, animation_set_end_delay, animation_set_flipbook_columns,
-    animation_set_flipbook_frame_height, animation_set_flipbook_frame_width,
-    animation_set_flipbook_frames, animation_set_flipbook_rows, animation_set_order,
-    animation_set_start_delay, set_animation_child_key,
+    animation_get_degrees, animation_get_duration, animation_get_flipbook_columns,
+    animation_get_flipbook_frame_height, animation_get_flipbook_frame_width,
+    animation_get_flipbook_frames, animation_get_flipbook_rows, animation_get_origin,
+    animation_set_degrees, animation_set_duration, animation_set_end_delay,
+    animation_set_flipbook_columns, animation_set_flipbook_frame_height,
+    animation_set_flipbook_frame_width, animation_set_flipbook_frames, animation_set_flipbook_rows,
+    animation_set_order, animation_set_origin, animation_set_start_delay, set_animation_child_key,
 };
 pub(crate) use runtime::{advance_animation_groups, stop_animation_groups_for_hidden_subtree};
 
@@ -611,6 +612,23 @@ pub(super) fn animation_get_progress(state: &mut LuaState) -> LuaResult<u32> {
 
 pub(super) fn animation_get_smooth_progress(state: &mut LuaState) -> LuaResult<u32> {
     animation_get_progress(state)
+}
+
+/// Set the animation's normalized progress, matching WoW's animation API.
+///
+/// The value is clamped to the [0, 1] range and represented by the elapsed
+/// time used by the animation runtime. A zero-duration animation has no
+/// meaningful elapsed interval, so it remains at zero (the runtime treats
+/// such animations as an immediate/static state).
+pub(super) fn animation_set_smooth_progress(state: &mut LuaState) -> LuaResult<u32> {
+    let progress = match stack_val(state, 2) {
+        Val::Num(value) => value.clamp(0.0, 1.0),
+        _ => 0.0,
+    };
+    with_animation_state_mut(state, |animation| {
+        animation.elapsed = animation.duration.max(0.0) * progress;
+    })?;
+    Ok(0)
 }
 
 pub(super) fn animation_is_stopped(state: &mut LuaState) -> LuaResult<u32> {

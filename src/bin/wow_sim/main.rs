@@ -72,6 +72,12 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Load the focused addon test lane and invoke an addon slash command.
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
+
     /// Load UI and dump frame tree (no GUI needed)
     DumpTree {
         #[arg(short, long)]
@@ -91,27 +97,8 @@ enum Commands {
     /// Render UI to an image file (no GUI needed)
     #[cfg(feature = "gui")]
     Screenshot {
-        #[arg(short, long, default_value = "screenshot.webp")]
-        output: PathBuf,
-        #[arg(long, default_value_t = 1600)]
-        width: u32,
-        #[arg(long, default_value_t = 1200)]
-        height: u32,
-        /// Apply an explicit UIParent scale before layout and capture.
-        #[arg(long)]
-        ui_scale: Option<f32>,
-        #[arg(short, long)]
-        filter: Option<String>,
-        #[arg(long, value_name = "WxH+X+Y")]
-        crop: Option<String>,
-        #[arg(long, value_name = "FILTER")]
-        dump_tree: Option<Option<String>>,
-        /// Write a machine-readable manifest of materialized WeakAuras frames.
-        #[arg(long)]
-        manifest: Option<PathBuf>,
-        /// Resolve this exact WeakAuras display through WeakAuras.GetRegion for the manifest.
-        #[arg(long = "manifest-id", value_name = "DISPLAY_ID")]
-        requested_ids: Vec<String>,
+        #[command(flatten)]
+        screenshot: ScreenshotArgs,
     },
 
     /// Show unique Lua errors as JSON (suppresses other output)
@@ -164,6 +151,49 @@ enum Commands {
     },
 }
 
+#[derive(clap::Args, Clone)]
+struct ScreenshotArgs {
+    #[arg(short, long, default_value = "screenshot.webp")]
+    output: PathBuf,
+    #[arg(long, default_value_t = 1600)]
+    width: u32,
+    #[arg(long, default_value_t = 1200)]
+    height: u32,
+    /// Apply an explicit UIParent scale before layout and capture.
+    #[arg(long)]
+    ui_scale: Option<f32>,
+    #[arg(short, long)]
+    filter: Option<String>,
+    #[arg(long, value_name = "WxH+X+Y")]
+    crop: Option<String>,
+    #[arg(long, value_name = "FILTER")]
+    dump_tree: Option<Option<String>>,
+    /// Write a machine-readable manifest of materialized WeakAuras frames.
+    #[arg(long)]
+    manifest: Option<PathBuf>,
+    /// Resolve this exact WeakAuras display through WeakAuras.GetRegion for the manifest.
+    #[arg(long = "manifest-id", value_name = "DISPLAY_ID")]
+    requested_ids: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// Invoke WeakAuras' `/wa` slash command without keyboard or mouse input.
+    #[command(name = "wa", alias = "weakauras")]
+    WeakAuras,
+    /// Preload WeakAuras and capture the Scalpel aura preview without restarting startup.
+    #[cfg(feature = "gui")]
+    #[command(name = "wa-screenshot")]
+    WeakAurasScreenshot {
+        #[command(flatten)]
+        screenshot: ScreenshotArgs,
+        /// Evaluate Lua after WeakAuras login and Options load, before ScalpelPreviewShow.
+        /// Prefix with @ to load from a file.
+        #[arg(long, value_name = "CODE_OR_@FILE")]
+        preview_lua: Option<String>,
+    },
+}
+
 impl Args {
     fn effective_screen(&self) -> ScreenKind {
         if self.character_select {
@@ -176,8 +206,14 @@ impl Args {
     fn is_test_command(&self) -> bool {
         matches!(
             self.command,
-            Some(Commands::SelfTest { .. }) | Some(Commands::RunTests { .. })
+            Some(Commands::SelfTest { .. })
+                | Some(Commands::RunTests { .. })
+                | Some(Commands::Admin { .. })
         )
+    }
+
+    fn is_admin_command(&self) -> bool {
+        matches!(self.command, Some(Commands::Admin { .. }))
     }
 
     fn skip_addons(&self) -> bool {
@@ -213,6 +249,13 @@ fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     if let Some(Commands::CacheTexture { ref path, force }) = args.command {
         return run_cache_texture(path, force);
+    }
+    if args.is_admin_command() {
+        // The admin lane is for focused addon probes, not a full Blizzard UI boot.
+        // Force this before any threads or Lua execution are started so an
+        // inherited `WOW_SIM_SKIP_BLIZZARD_UI=0` cannot reintroduce Blizzard
+        // chrome/assets into the black-stage route.
+        unsafe { std::env::set_var("WOW_SIM_SKIP_BLIZZARD_UI", "1") };
     }
     let screen = args.effective_screen();
     let saved_stdout = redirect_if_quiet(&args);
@@ -289,6 +332,15 @@ fn resolve_exec_lua(arg: &Option<String>) -> Option<String> {
     })
 }
 
+fn resolve_preview_lua(arg: &str) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(path) = arg.strip_prefix('@') {
+        std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read --preview-lua file {path}: {error}").into())
+    } else {
+        Ok(arg.to_owned())
+    }
+}
+
 fn init_sound(env: &WowLuaEnv) {
     let skip = std::env::var("WOW_SIM_NO_SOUND")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -332,6 +384,9 @@ fn init_environment(
         state.addon_base_paths = addon_base_paths;
     }
     wow_ui_sim::xml::register_intrinsic_templates();
+    if skip_blizzard_ui() {
+        wow_ui_sim::xml::register_mists_compat_templates();
+    }
     Ok(())
 }
 
@@ -494,11 +549,13 @@ impl CommandDispatch {
     }
 }
 
-fn dispatch_command(dispatch: CommandDispatch) -> Result<(), Box<dyn std::error::Error>> {
-    match dispatch.command {
+fn dispatch_command(mut dispatch: CommandDispatch) -> Result<(), Box<dyn std::error::Error>> {
+    match dispatch.command.take() {
         Some(Commands::DumpTree { .. }) => dispatch_dump_tree(dispatch),
         #[cfg(feature = "gui")]
-        Some(Commands::Screenshot { .. }) => gui_commands::dispatch_screenshot(dispatch),
+        Some(Commands::Screenshot { screenshot }) => {
+            gui_commands::dispatch_screenshot(dispatch, screenshot)
+        }
         Some(Commands::LuaErrors) => run_lua_errors(&dispatch),
         Some(Commands::SelfTest {
             max_ticks,
@@ -507,6 +564,7 @@ fn dispatch_command(dispatch: CommandDispatch) -> Result<(), Box<dyn std::error:
         Some(Commands::RunTests { ref addon_name }) => {
             run_addon_tests(&dispatch, addon_name);
         }
+        Some(Commands::Admin { ref command }) => run_admin_command(&dispatch, command)?,
         #[cfg(feature = "gui")]
         Some(Commands::DumpTexture { .. }) => gui_commands::dispatch_dump_texture(dispatch),
         #[cfg(feature = "gui")]
@@ -525,6 +583,260 @@ fn dispatch_command(dispatch: CommandDispatch) -> Result<(), Box<dyn std::error:
         }
     }
     Ok(())
+}
+
+fn admin_wa_slash_input(command: &AdminCommand) -> Option<&'static str> {
+    match command {
+        AdminCommand::WeakAuras => Some("/wa"),
+        #[cfg(feature = "gui")]
+        AdminCommand::WeakAurasScreenshot { .. } => None,
+    }
+}
+
+fn run_admin_command(
+    dispatch: &CommandDispatch,
+    command: &AdminCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "gui")]
+    let is_wa_command = matches!(
+        command,
+        AdminCommand::WeakAuras | AdminCommand::WeakAurasScreenshot { .. }
+    );
+    #[cfg(not(feature = "gui"))]
+    let is_wa_command = matches!(command, AdminCommand::WeakAuras);
+    if !is_wa_command {
+        settle_headless_startup(&dispatch.env);
+    }
+    if is_wa_command {
+        const MAX_LOGIN_TICKS: usize = 8_192;
+        const PROBE_SETUP: &str = r#"
+            local registry = debug.getregistry()
+            local key = "__wow_sim_admin_wa_coroutine_probe"
+            local state = {
+                previous = registry[key],
+                original_resume = coroutine.resume,
+                resumes = 0,
+                records = {},
+                max_records = 32,
+                max_text = 120,
+            }
+            local native_unpack = unpack
+            local function pack(...)
+                local values = { n = select('#', ...) }
+                for index = 1, values.n do
+                    values[index] = select(index, ...)
+                end
+                return values
+            end
+            local function unpack_values(values, first, last)
+                return native_unpack(values, first or 1, last or values.n)
+            end
+            local function clip(value)
+                local ok, text = pcall(tostring, value)
+                if not ok then
+                    text = "<tostring-error>"
+                end
+                return string.sub(text, 1, state.max_text)
+            end
+            local function status(thread)
+                if type(thread) ~= "thread" then
+                    return "<non-thread>"
+                end
+                local ok, result = pcall(coroutine.status, thread)
+                return ok and result or "<status-error>"
+            end
+            state.wrapper = function(thread, ...)
+                local results = pack(state.original_resume(thread, ...))
+                state.resumes = state.resumes + 1
+                state.last_status = status(thread)
+                state.last_ok = results[1] == true
+                state.last_label = results[2] == nil and "<nil>" or clip(results[2])
+                state.last_estimate = results[3] == nil and "<nil>" or clip(results[3])
+                if #state.records < state.max_records then
+                    state.records[#state.records + 1] = string.format(
+                        "resume=%d ok=%s status=%s label=%s estimate=%s",
+                        state.resumes,
+                        state.last_ok and "true" or "false",
+                        state.last_status,
+                        state.last_label,
+                        state.last_estimate
+                    )
+                end
+                return unpack_values(results, 1, results.n)
+            end
+            registry[key] = state
+            coroutine.resume = state.wrapper
+            return true
+        "#;
+        const PROBE_SUMMARY: &str = r#"
+            local state = debug.getregistry()["__wow_sim_admin_wa_coroutine_probe"]
+            if not state then
+                error("admin coroutine probe state is missing")
+            end
+            local lines = {
+                string.format(
+                    "resumes=%d last_ok=%s last_status=%s last_label=%s last_estimate=%s records=%d",
+                    state.resumes,
+                    state.last_ok == nil and "<none>" or (state.last_ok and "true" or "false"),
+                    state.last_status or "<none>",
+                    state.last_label or "<none>",
+                    state.last_estimate or "<none>",
+                    #state.records
+                ),
+            }
+            for i = 1, #state.records do
+                lines[#lines + 1] = state.records[i]
+            end
+            return string.sub(table.concat(lines, " | "), 1, 4096)
+        "#;
+        const PROBE_CLEANUP: &str = r#"
+            local registry = debug.getregistry()
+            local key = "__wow_sim_admin_wa_coroutine_probe"
+            local state = registry[key]
+            if not state then
+                error("admin coroutine probe state is missing during cleanup")
+            end
+            local changed = coroutine.resume ~= state.wrapper
+            coroutine.resume = state.original_resume
+            registry[key] = state.previous
+            if changed then
+                error("coroutine.resume changed while admin probe was installed")
+            end
+            return true
+        "#;
+
+        let setup = dispatch
+            .env
+            .eval::<bool>(PROBE_SETUP)
+            .map_err(|error| format!("failed to install admin coroutine probe: {error}"))?;
+        if !setup {
+            return Err("failed to install admin coroutine probe: Lua setup returned false".into());
+        }
+        // Install first so resumes made by headless startup are observable.
+        settle_headless_startup(&dispatch.env);
+
+        let probe_result: Result<Option<String>, Box<dyn std::error::Error>> = (|| {
+            let login_finished = (0..MAX_LOGIN_TICKS).any(|_| {
+                if dispatch
+                    .env
+                    .eval::<bool>("return WeakAuras and WeakAuras.IsLoginFinished()")
+                    .unwrap_or(false)
+                {
+                    true
+                } else {
+                    run_extra_update_ticks(&dispatch.env, 1);
+                    false
+                }
+            });
+            if login_finished {
+                Ok(None)
+            } else {
+                let summary = dispatch
+                    .env
+                    .eval::<String>(PROBE_SUMMARY)
+                    .map_err(|error| format!("failed to read admin coroutine probe: {error}"))?;
+                Ok(Some(summary))
+            }
+        })();
+        let cleanup_result: Result<(), Box<dyn std::error::Error>> = (|| {
+            let cleanup = dispatch
+                .env
+                .eval::<bool>(PROBE_CLEANUP)
+                .map_err(|error| format!("failed to restore admin coroutine probe: {error}"))?;
+            if cleanup {
+                Ok(())
+            } else {
+                Err("failed to restore admin coroutine probe: Lua cleanup returned false".into())
+            }
+        })();
+        match (probe_result, cleanup_result) {
+            (Err(probe_error), Err(cleanup_error)) => {
+                return Err(format!("{probe_error}; additionally, {cleanup_error}").into());
+            }
+            (Err(probe_error), Ok(())) => return Err(probe_error),
+            (_, Err(cleanup_error)) => return Err(cleanup_error),
+            (Ok(Some(summary)), Ok(())) => {
+                return Err(format!(
+                    "WeakAuras login did not finish before the admin command timeout: {summary}"
+                )
+                .into());
+            }
+            (Ok(None), Ok(())) => {}
+        }
+    }
+    #[cfg(feature = "gui")]
+    if let AdminCommand::WeakAurasScreenshot {
+        screenshot,
+        preview_lua,
+    } = command
+    {
+        const PREVIEW_SETUP: &str = r#"
+            if type(C_AddOns) ~= "table" or type(C_AddOns.LoadAddOn) ~= "function" then
+                error("C_AddOns.LoadAddOn is unavailable")
+            end
+            C_AddOns.LoadAddOn("WeakAurasOptions")
+        "#;
+        dispatch
+            .env
+            .exec_maybe_secure(PREVIEW_SETUP, dispatch.exec_lua_secure)
+            .map_err(|error| {
+                format!("failed to load WeakAurasOptions for aura preview: {error}")
+            })?;
+        let options_loaded = dispatch
+            .env
+            .eval::<bool>("return C_AddOns.IsAddOnLoaded(\"WeakAurasOptions\")")
+            .unwrap_or(false);
+        if !options_loaded {
+            return Err("WeakAurasOptions did not load for aura preview".into());
+        }
+        if let Some(preview_lua) = preview_lua {
+            let preview_lua = resolve_preview_lua(&preview_lua)?;
+            dispatch
+                .env
+                .exec_maybe_secure(&preview_lua, dispatch.exec_lua_secure)
+                .map_err(|error| {
+                    format!("failed to evaluate --preview-lua for aura preview: {error}")
+                })?;
+        }
+        dispatch
+            .env
+            .exec_maybe_secure(
+                r#"
+                    if not WeakAuras or type(WeakAuras.ScalpelPreviewShow) ~= "function" then
+                        error("WeakAuras.ScalpelPreviewShow is unavailable")
+                    end
+                    WeakAuras.ScalpelPreviewShow()
+                "#,
+                dispatch.exec_lua_secure,
+            )
+            .map_err(|error| format!("WeakAuras aura preview failed: {error}"))?;
+        run_extra_update_ticks(&dispatch.env, 3);
+        gui_commands::run_admin_screenshot(
+            &dispatch.env,
+            &dispatch.font_system,
+            screenshot,
+            dispatch.delay,
+            dispatch.exec_lua.as_deref(),
+            dispatch.exec_lua_secure,
+        );
+        return Ok(());
+    }
+    let input =
+        admin_wa_slash_input(command).expect("only the generic admin wa uses slash dispatch");
+    if dispatch.env.dispatch_slash_command(input)? {
+        run_extra_update_ticks(&dispatch.env, 3);
+        let options_loaded = dispatch
+            .env
+            .eval::<bool>("return C_AddOns.IsAddOnLoaded(\"WeakAurasOptions\")")
+            .unwrap_or(false);
+        if options_loaded {
+            Ok(())
+        } else {
+            Err("/wa dispatched but WeakAurasOptions did not load".into())
+        }
+    } else {
+        Err(format!("no slash command handler registered for {input}").into())
+    }
 }
 
 fn dispatch_dump_tree(dispatch: CommandDispatch) {
@@ -660,7 +972,105 @@ mod tests {
     #[test]
     fn explicit_screen_parses_character_create() {
         let args = Args::try_parse_from(["wow-sim", "--screen", "character-create"])
-            .expect("screen option should parse character-create");
+            .expect("character-create screen should parse");
         assert_eq!(args.effective_screen(), ScreenKind::CharacterCreate);
+    }
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn admin_wa_screenshot_selects_preview_instead_of_slash_dispatch() {
+        let wa = AdminCommand::WeakAuras;
+        let screenshot = AdminCommand::WeakAurasScreenshot {
+            screenshot: ScreenshotArgs {
+                output: PathBuf::from("screenshot.webp"),
+                width: 1600,
+                height: 1200,
+                ui_scale: None,
+                filter: None,
+                crop: None,
+                dump_tree: None,
+                manifest: None,
+                requested_ids: Vec::new(),
+            },
+            preview_lua: None,
+        };
+        assert_eq!(admin_wa_slash_input(&wa), Some("/wa"));
+        assert_eq!(admin_wa_slash_input(&screenshot), None);
+    }
+
+    #[test]
+    fn admin_wa_command_parses_without_enabling_gui() {
+        let args = Args::try_parse_from(["wow-sim", "admin", "wa"]).expect("admin wa should parse");
+        assert!(args.is_admin_command());
+        assert!(args.is_test_command());
+    }
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn admin_wa_screenshot_command_reuses_screenshot_options() {
+        let args = Args::try_parse_from([
+            "wow-sim",
+            "admin",
+            "wa-screenshot",
+            "--output",
+            "/tmp/wa.png",
+            "--width",
+            "2560",
+            "--height",
+            "1440",
+            "--manifest",
+            "/tmp/wa.json",
+            "--manifest-id",
+            "Display",
+        ])
+        .expect("admin wa-screenshot should parse");
+        let Some(Commands::Admin {
+            command:
+                AdminCommand::WeakAurasScreenshot {
+                    screenshot,
+                    preview_lua,
+                },
+        }) = args.command
+        else {
+            panic!("expected admin wa-screenshot command");
+        };
+        assert_eq!(screenshot.output, PathBuf::from("/tmp/wa.png"));
+        assert_eq!((screenshot.width, screenshot.height), (2560, 1440));
+        assert_eq!(screenshot.manifest, Some(PathBuf::from("/tmp/wa.json")));
+        assert_eq!(screenshot.requested_ids, vec!["Display"]);
+        assert_eq!(preview_lua, None);
+    }
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn admin_wa_screenshot_parses_inline_and_file_preview_lua() {
+        for value in ["return true", "@/tmp/generated-preview.lua"] {
+            let args =
+                Args::try_parse_from(["wow-sim", "admin", "wa-screenshot", "--preview-lua", value])
+                    .expect("admin wa-screenshot should parse --preview-lua");
+            let Some(Commands::Admin {
+                command: AdminCommand::WeakAurasScreenshot { preview_lua, .. },
+            }) = args.command
+            else {
+                panic!("expected admin wa-screenshot command");
+            };
+            assert_eq!(preview_lua.as_deref(), Some(value));
+        }
+    }
+    #[cfg(feature = "gui")]
+    #[test]
+    fn admin_wa_screenshot_injects_preview_before_availability_check() {
+        let source = include_str!("main.rs");
+        let options_ready = source
+            .find("WeakAurasOptions did not load for aura preview")
+            .expect("Options readiness guard should remain");
+        let preview_eval = source
+            .find("failed to evaluate --preview-lua for aura preview")
+            .expect("preview Lua evaluation should remain");
+        let availability_check = source
+            .find("WeakAuras.ScalpelPreviewShow is unavailable")
+            .expect("preview availability check should remain");
+        assert!(options_ready < preview_eval);
+        assert!(preview_eval < availability_check);
     }
 }

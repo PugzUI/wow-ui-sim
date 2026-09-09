@@ -8,6 +8,145 @@
 -- aliases or the SetBackdrop frame proxies. The function stubs here address
 -- specifically the 46 unique missing globals in mists's lua-errors baseline.
 
+-- WoW exposes the string library helpers as globals; embedded addon libraries
+-- (including LibStub) use this alias even though it is not a Lua builtin.
+if rawget(_G, "strmatch") == nil and string ~= nil then
+  strmatch = string.match
+end
+-- The simulator's Mists profile must publish the same project identity that
+-- the client-side ProjectConstants.lua publishes. Some cached Classic source
+-- trees only define the retail/classic constants, while addon libraries use
+-- WOW_PROJECT_ID to select their Mists implementation.
+if rawget(_G, "WOW_PROJECT_MAINLINE") == nil then WOW_PROJECT_MAINLINE = 1 end
+if rawget(_G, "WOW_PROJECT_CLASSIC") == nil then WOW_PROJECT_CLASSIC = 2 end
+if rawget(_G, "WOW_PROJECT_MISTS") == nil then WOW_PROJECT_MISTS = 19 end
+if rawget(_G, "WOW_PROJECT_ID") == nil then WOW_PROJECT_ID = WOW_PROJECT_MISTS end
+
+
+
+-- WoW exposes commonly used math helpers as globals in addon Lua.
+if rawget(_G, "random") == nil and math ~= nil then random = math.random end
+if rawget(_G, "sqrt") == nil and math ~= nil then sqrt = math.sqrt end
+if rawget(_G, "rad") == nil and math ~= nil then rad = math.rad end
+if rawget(_G, "cos") == nil and math ~= nil then cos = math.cos end
+if rawget(_G, "sin") == nil and math ~= nil then sin = math.sin end
+if rawget(_G, "tinsert") == nil and table ~= nil then tinsert = table.insert end
+if rawget(_G, "tremove") == nil and table ~= nil then tremove = table.remove end
+if rawget(_G, "wipe") == nil and table ~= nil then
+  if table.wipe ~= nil then
+    wipe = table.wipe
+  else
+    function wipe(tbl)
+      for key in pairs(tbl) do
+        tbl[key] = nil
+      end
+      return tbl
+    end
+  end
+end
+if rawget(_G, "atan2") == nil and math ~= nil then
+  function atan2(y, x)
+    return math.deg(math.atan2(y, x))
+  end
+end
+
+if rawget(_G, "tan") == nil then
+  function tan(x)
+    return math.tan(math.rad(x))
+  end
+end
+if rawget(_G, "Round") == nil and math ~= nil then
+  function Round(num, numDecimalPlaces)
+    local mult = 10 ^ (numDecimalPlaces or 0)
+    return math.floor(num * mult + 0.5) / mult
+  end
+end
+
+-- These helpers normally come from Blizzard FrameXML. Keep isolated addon
+-- startup usable when the Blizzard UI tree is intentionally skipped.
+if rawget(_G, "GetTexCoordsByGrid") == nil then
+  function GetTexCoordsByGrid(xOffset, yOffset, textureWidth, textureHeight, gridWidth, gridHeight)
+    local widthPerGrid = gridWidth / textureWidth
+    local heightPerGrid = gridHeight / textureHeight
+    return (xOffset - 1) * widthPerGrid, xOffset * widthPerGrid,
+      (yOffset - 1) * heightPerGrid, yOffset * heightPerGrid
+  end
+end
+
+if rawget(_G, "CreateTextureMarkup") == nil then
+  function CreateTextureMarkup(file, fileWidth, fileHeight, width, height, left, right, top, bottom, xOffset, yOffset)
+    return string.format(
+      "|T%s:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d|t",
+      file,
+      height,
+      width,
+      xOffset or 0,
+      yOffset or 0,
+      fileWidth,
+      fileHeight,
+      (left or 0) * fileWidth,
+      (right or 0) * fileWidth,
+      (top or 0) * fileHeight,
+      (bottom or 0) * fileHeight
+    )
+  end
+end
+
+if rawget(_G, "GetClassAtlas") == nil then
+  function GetClassAtlas(className)
+    return ("classicon-%s"):format(className)
+  end
+end
+
+if rawget(_G, "INLINE_TANK_ICON") == nil then
+  INLINE_TANK_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:0:19:22:41|t"
+end
+if rawget(_G, "INLINE_HEALER_ICON") == nil then
+  INLINE_HEALER_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:20:39:1:20|t"
+end
+if rawget(_G, "INLINE_DAMAGER_ICON") == nil then
+  INLINE_DAMAGER_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:20:39:22:41|t"
+end
+
+
+if rawget(_G, "ChatFrame_AddMessageEventFilter") == nil then
+  function ChatFrame_AddMessageEventFilter() end
+end
+
+if rawget(_G, "ButtonFrameTemplate_HidePortrait") == nil then
+  function ButtonFrameTemplate_HidePortrait(self)
+    if self and self.portrait and type(self.portrait.Hide) == "function" then
+      self.portrait:Hide()
+    end
+  end
+end
+
+
+if rawget(_G, "TableHasAnyEntries") == nil then
+  function TableHasAnyEntries(tbl)
+    return next(tbl) ~= nil
+  end
+
+
+end
+
+-- FrameXML's TableUtil.lua normally provides this iterator. Keep persisted
+-- hierarchy processing usable when the Blizzard UI tree is intentionally
+-- skipped, while preserving any definition supplied by a loaded addon.
+if rawget(_G, "ipairs_reverse") == nil then
+  function ipairs_reverse(tbl)
+    local function Enumerator(tbl, index)
+      index = index - 1
+      local value = tbl[index]
+      if value ~= nil then
+        return index, value
+      end
+    end
+    return Enumerator, tbl, #tbl + 1
+  end
+end
+
+
 -- ─── Expansion helpers ──────────────────────────────────────────────────────
 
 if rawget(_G, "GetExpansionLevel") == nil or GetExpansionLevel() ~= LE_EXPANSION_MISTS_OF_PANDARIA then
@@ -52,6 +191,28 @@ if C_Item.GetItemStats == nil then
   function C_Item.GetItemStats()
     return {}
   end
+end
+
+-- Mists does not expose Retail's Item mixin. LibRangeCheck probes it while
+-- building item-based range checkers; report those items as unavailable so it
+-- can safely fall back to spell and interaction-distance checkers.
+if rawget(_G, "Item") == nil then
+  local unavailableItem = {
+    IsItemDataCached = function()
+      return false
+    end,
+    IsItemEmpty = function()
+      return true
+    end,
+  }
+  rawset(_G, "Item", {
+    CreateFromItemID = function()
+      return unavailableItem
+    end,
+    CreateFromEquipmentSlot = function()
+      return unavailableItem
+    end,
+  })
 end
 
 C_MerchantFrame = C_MerchantFrame or {}
@@ -155,10 +316,6 @@ if rawget(_G, "GetNumClasses") ~= nil and GetNumClasses() > 11 then
 end
 
 -- ─── Pre-Cata leftover globals that mists kept but retail removed ────────────
-
-if rawget(_G, "FillLocalizedClassList") == nil then
-  function FillLocalizedClassList(t) return t end
-end
 
 if rawget(_G, "GetActionBarPage") == nil then
   function GetActionBarPage() return 1 end
@@ -1221,6 +1378,8 @@ local function mistsPushTalentInfo(info)
 end
 
 C_SpecializationInfo = C_SpecializationInfo or {}
+
+
 local mistsOriginalGetTalentInfo = C_SpecializationInfo.GetTalentInfo
 do
   function C_SpecializationInfo.GetTalentInfo(query)
@@ -1677,6 +1836,94 @@ if PriestBarMixin.OnLeave == nil then
   function PriestBarMixin:OnLeave()
     if GameTooltip then
       GameTooltip:Hide()
+    end
+  end
+end
+
+-- Minimal BackdropTemplateMixin methods for addon-created panels. The real
+-- Blizzard mixin is skipped with the rest of FrameXML in this mode.
+if rawget(_G, "BackdropTemplateMixin") == nil then
+  BackdropTemplateMixin = {}
+end
+if BackdropTemplateMixin.SetBackdrop == nil then
+  function BackdropTemplateMixin:SetBackdrop(info)
+    self.backdropInfo = info
+    if self.SetBackdropNative then
+      self:SetBackdropNative(info)
+    end
+  end
+end
+if BackdropTemplateMixin.GetBackdrop == nil then
+  function BackdropTemplateMixin:GetBackdrop()
+    return self.backdropInfo
+  end
+end
+if BackdropTemplateMixin.SetBackdropColor == nil then
+  function BackdropTemplateMixin:SetBackdropColor(r, g, b, a)
+    self.backdropColor = { r, g, b, a }
+    if self.SetBackdropColorNative then
+      self:SetBackdropColorNative(r, g, b, a)
+    end
+  end
+end
+if BackdropTemplateMixin.GetBackdropColor == nil then
+  function BackdropTemplateMixin:GetBackdropColor()
+    local color = self.backdropColor or { 1, 1, 1, 1 }
+    return color[1], color[2], color[3], color[4]
+  end
+end
+if BackdropTemplateMixin.SetBackdropBorderColor == nil then
+  function BackdropTemplateMixin:SetBackdropBorderColor(r, g, b, a)
+    self.backdropBorderColor = { r, g, b, a }
+    if self.SetBackdropBorderColorNative then
+      self:SetBackdropBorderColorNative(r, g, b, a)
+    end
+  end
+end
+if BackdropTemplateMixin.OnBackdropLoaded == nil then
+  function BackdropTemplateMixin:OnBackdropLoaded() end
+end
+if BackdropTemplateMixin.OnBackdropSizeChanged == nil then
+  function BackdropTemplateMixin:OnBackdropSizeChanged() end
+end
+
+-- Minimal panel controls used by WeakAurasOptions when Blizzard UI is
+-- intentionally skipped for the isolated Mists addon lane.
+if rawget(_G, "MaximizeMinimizeButtonFrameMixin") == nil then
+  MaximizeMinimizeButtonFrameMixin = {}
+end
+if MaximizeMinimizeButtonFrameMixin.SetOnMaximizedCallback == nil then
+  function MaximizeMinimizeButtonFrameMixin:SetOnMaximizedCallback(callback)
+    self.onMaximizedCallback = callback
+  end
+end
+if MaximizeMinimizeButtonFrameMixin.SetOnMinimizedCallback == nil then
+  function MaximizeMinimizeButtonFrameMixin:SetOnMinimizedCallback(callback)
+    self.onMinimizedCallback = callback
+  end
+end
+if MaximizeMinimizeButtonFrameMixin.Maximize == nil then
+  function MaximizeMinimizeButtonFrameMixin:Maximize()
+    self.isMaximized = true
+    if self.MaximizeButton then self.MaximizeButton:Hide() end
+    if self.MinimizeButton then self.MinimizeButton:Show() end
+    if self.onMaximizedCallback then self.onMaximizedCallback() end
+  end
+end
+if MaximizeMinimizeButtonFrameMixin.Minimize == nil then
+  function MaximizeMinimizeButtonFrameMixin:Minimize()
+    self.isMaximized = false
+    if self.MaximizeButton then self.MaximizeButton:Show() end
+    if self.MinimizeButton then self.MinimizeButton:Hide() end
+    if self.onMinimizedCallback then self.onMinimizedCallback() end
+  end
+end
+if MaximizeMinimizeButtonFrameMixin.OnShow == nil then
+  function MaximizeMinimizeButtonFrameMixin:OnShow()
+    if self.isMaximized then
+      self:Maximize()
+    else
+      self:Minimize()
     end
   end
 end

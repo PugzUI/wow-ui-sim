@@ -538,6 +538,13 @@ impl App {
     }
 
     pub(super) fn handle_middle_click(&mut self, pos: Point) {
+        // The native Visualizer is an addons-only surface. Keep the simulator
+        // inspector out of that window even when a middle click is received by
+        // the shared canvas event path.
+        if crate::render::texture::visualizer_mode() {
+            return;
+        }
+
         if let Some(frame_id) = self.hit_test(pos) {
             self.populate_inspector(frame_id);
             self.inspected_frame = Some(frame_id);

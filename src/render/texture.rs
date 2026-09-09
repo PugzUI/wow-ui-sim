@@ -138,8 +138,8 @@ fn draw_horizontal_slice_parts(frame: &mut Frame, texture: &HorizontalSliceTextu
         texture.middle_handle,
         texture.right_handle,
     ) {
-        let dst_left_cap = texture.left_cap_width * ui_scale();
-        let dst_right_cap = texture.right_cap_width * ui_scale();
+        let dst_left_cap = texture.left_cap_width * UI_SCALE;
+        let dst_right_cap = texture.right_cap_width * UI_SCALE;
         let dst_middle = texture.bounds.width - dst_left_cap - dst_right_cap;
 
         if dst_middle >= 0.0 {

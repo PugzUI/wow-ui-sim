@@ -166,6 +166,7 @@ pub fn t_filter(state: &mut LuaState) -> LuaResult<u32> {
     Ok(1)
 }
 
+pub use table_util::t_compare;
 pub use table_util::t_invert;
 pub use table_util::table_util_find_indexed_mismatch;
 
@@ -650,6 +651,7 @@ fn register_utility_globals(lua: &mut rilua::Lua) -> LuaResult<()> {
     LuaApiMut::register_function(lua, "tContains", t_contains)?;
     LuaApiMut::register_function(lua, "tIndexOf", t_index_of)?;
     LuaApiMut::register_function(lua, "tFilter", t_filter)?;
+    LuaApiMut::register_function(lua, "tCompare", t_compare)?;
     LuaApiMut::register_function(lua, "tInvert", t_invert)?;
     LuaApiMut::register_function(lua, "getglobal", getglobal)?;
     LuaApiMut::register_function(lua, "setglobal", setglobal)?;

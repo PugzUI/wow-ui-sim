@@ -7,11 +7,31 @@ use super::{
 use crate::render::BlendMode;
 use crate::render::shader::QuadBatch;
 use crate::render::shader::atlas::{BcFormat, BcTextureEntry};
-use crate::render::shader::quad::QuadVertex;
+use crate::render::shader::quad::{FLAG_COOLDOWN_SWIPE, QuadVertex};
 use bytemuck::Zeroable;
 use iced::widget::shader::{Pipeline, Primitive as ShaderPrimitive, Viewport};
 use iced::{Point, Rectangle, Size};
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
+
+#[test]
+fn quad_shader_clamp_path_compiles_on_real_device() {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let (device, queue) = pollster::block_on(async {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("adapter");
+        adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+            .expect("device")
+    });
+
+    // Pipeline creation invokes wgpu's WGSL parser and validates both entry
+    // points against the bind-group layouts, including the clamp-to-black path.
+    let _pipeline = WowUiPipeline::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+}
 
 #[test]
 fn decode_crop_request_rejects_malformed_coords() {
@@ -68,6 +88,80 @@ fn load_texture_prefer_bc_reuses_cached_rgba_buffer() {
     );
 }
 
+#[test]
+fn aura9_tga_alpha_survives_decode_request_and_rgba_atlas_upload() {
+    let root = TempDir::new().expect("temporary addon root");
+    let texture_dir = root.path().join("WeakAuras");
+    std::fs::create_dir_all(&texture_dir).expect("addon texture directory");
+    let texture_path = texture_dir.join("Aura9.tga");
+    let mut image = image::RgbaImage::from_pixel(128, 128, image::Rgba([32, 64, 96, 255]));
+    for pixel in image.pixels_mut().take(10_301) {
+        pixel.0[3] = 0;
+    }
+    image.save(&texture_path).expect("write Aura9 TGA fixture");
+
+    let request_path = r"Interface\AddOns\WeakAuras\Aura9";
+    let mut texture_manager = crate::texture::TextureManager::new().with_addons_path(root.path());
+    let loaded = load_texture_prefer_bc(&mut texture_manager, request_path)
+        .expect("Aura9 request should decode");
+    let LoadedTexture::Rgba(upload) = loaded else {
+        panic!("TGA Aura9 must use the RGBA renderer upload path");
+    };
+    assert_eq!((upload.width, upload.height), (128, 128));
+    assert_eq!(
+        upload
+            .rgba
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] == 0)
+            .count(),
+        10_301,
+        "decoded Aura9 alpha must retain the transparent source pixels"
+    );
+
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let (device, queue) = pollster::block_on(async {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("adapter");
+        adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+            .expect("device")
+    });
+    let mut pipeline = WowUiPipeline::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let entry = pipeline
+        .texture_atlas_mut()
+        .upload(
+            &queue,
+            request_path,
+            upload.width,
+            upload.height,
+            &upload.rgba,
+        )
+        .expect("Aura9 RGBA data should upload into the atlas");
+    assert_eq!(entry.original_width, 128);
+    assert_eq!(entry.original_height, 128);
+
+    let mut batch = QuadBatch::default();
+    batch.push_textured_path(
+        Rectangle::new(Point::ORIGIN, Size::new(128.0, 128.0)),
+        request_path,
+        [1.0, 1.0, 1.0, 1.0],
+        BlendMode::Alpha,
+    );
+    let resolved = resolve_and_scale_quads(&mut pipeline, &batch, 1.0);
+    assert_eq!(resolved.vertices.len(), 4);
+    for vertex in &resolved.vertices {
+        assert!(
+            vertex.tex_coords[0] >= entry.uv_x
+                && vertex.tex_coords[0] <= entry.uv_x + entry.uv_width
+                && vertex.tex_coords[1] >= entry.uv_y
+                && vertex.tex_coords[1] <= entry.uv_y + entry.uv_height,
+            "request UV must resolve inside the Aura9 atlas slot"
+        );
+    }
+}
 #[test]
 fn load_texture_prefer_bc_reuses_cached_crop_buffer() {
     let mut mgr = crate::texture::TextureManager::new();
@@ -414,6 +508,99 @@ fn resolved_textures_remap_quad_uvs_into_atlas_slot() {
 }
 
 #[test]
+fn resolved_cooldown_swipe_preserves_progress_and_remaps_sample_uvs() {
+    let entry = crate::render::shader::atlas::TextureEntry {
+        tier: 0,
+        grid_x: 2,
+        grid_y: 3,
+        original_width: 64,
+        original_height: 32,
+        uv_x: 0.25,
+        uv_y: 0.5,
+        uv_width: 0.125,
+        uv_height: 0.0625,
+    };
+    let flags = BlendMode::Alpha as u32 | FLAG_COOLDOWN_SWIPE;
+    let mut vertices = [
+        QuadVertex {
+            tex_coords: [0.25, 0.0],
+            flags,
+            mask_tex_coords: [0.2, 0.3],
+            tex_index: -2,
+            ..QuadVertex::zeroed()
+        },
+        QuadVertex {
+            tex_coords: [0.25, 0.0],
+            flags,
+            mask_tex_coords: [0.8, 0.9],
+            tex_index: -2,
+            ..QuadVertex::zeroed()
+        },
+    ];
+
+    apply_resolved_texture_entry(&mut vertices, ResolvedTextureEntry::Rgba(entry), true);
+
+    assert_eq!(vertices[0].tex_index, entry.tex_index());
+    assert_eq!(vertices[1].tex_index, entry.tex_index());
+    assert_eq!(
+        vertices[0].tex_coords,
+        [0.25, 0.0],
+        "atlas resolution must not reinterpret cooldown progress as a texture U"
+    );
+    assert_eq!(
+        vertices[1].tex_coords,
+        [0.25, 0.0],
+        "all cooldown vertices must retain the same radial progress"
+    );
+    assert!(
+        (vertices[0].mask_tex_coords[0]
+            - remap_entry_uv(
+                0.2,
+                UvRemap::entry_axis(entry.uv_x, entry.uv_width, entry.original_width, entry.tier),
+            ))
+        .abs()
+            < 1e-6
+    );
+    assert!(
+        (vertices[0].mask_tex_coords[1]
+            - remap_entry_uv(
+                0.3,
+                UvRemap::entry_axis(
+                    entry.uv_y,
+                    entry.uv_height,
+                    entry.original_height,
+                    entry.tier
+                ),
+            ))
+        .abs()
+            < 1e-6
+    );
+    assert!(
+        (vertices[1].mask_tex_coords[0]
+            - remap_entry_uv(
+                0.8,
+                UvRemap::entry_axis(entry.uv_x, entry.uv_width, entry.original_width, entry.tier),
+            ))
+        .abs()
+            < 1e-6
+    );
+    assert!(
+        (vertices[1].mask_tex_coords[1]
+            - remap_entry_uv(
+                0.9,
+                UvRemap::entry_axis(
+                    entry.uv_y,
+                    entry.uv_height,
+                    entry.original_height,
+                    entry.tier
+                ),
+            ))
+        .abs()
+            < 1e-6
+    );
+}
+
+#[test]
 fn resolved_bc_entries_remap_quad_uvs_into_bc_slot() {
     let bc_entry = BcTextureEntry {
         format: BcFormat::Bc3,
@@ -449,6 +636,77 @@ fn resolved_bc_entries_remap_quad_uvs_into_bc_slot() {
     assert!((vertices[0].tex_coords[1] - remap_bc_entry_uv(0.0, 0.5, 0.25, 64)).abs() < 1e-6);
     assert!((vertices[1].tex_coords[0] - remap_bc_entry_uv(1.0, 0.25, 0.125, 128)).abs() < 1e-6);
     assert!((vertices[1].tex_coords[1] - remap_bc_entry_uv(1.0, 0.5, 0.25, 64)).abs() < 1e-6);
+}
+
+#[test]
+fn resolved_cooldown_swipe_preserves_progress_and_remaps_bc_sample_uvs() {
+    let entry = BcTextureEntry {
+        format: BcFormat::Bc3,
+        grid_x: 1,
+        grid_y: 2,
+        original_width: 64,
+        original_height: 32,
+        uv_x: 0.25,
+        uv_y: 0.5,
+        uv_width: 0.125,
+        uv_height: 0.0625,
+    };
+    let flags = BlendMode::Alpha as u32 | FLAG_COOLDOWN_SWIPE;
+    let mut vertices = [
+        QuadVertex {
+            tex_coords: [0.75, 0.0],
+            flags,
+            mask_tex_coords: [0.2, 0.3],
+            tex_index: -2,
+            ..QuadVertex::zeroed()
+        },
+        QuadVertex {
+            tex_coords: [0.75, 0.0],
+            flags,
+            mask_tex_coords: [0.8, 0.9],
+            tex_index: -2,
+            ..QuadVertex::zeroed()
+        },
+    ];
+
+    apply_resolved_texture_entry(&mut vertices, ResolvedTextureEntry::Bc(entry), true);
+
+    assert_eq!(vertices[0].tex_index, entry.tex_index());
+    assert_eq!(vertices[1].tex_index, entry.tex_index());
+    assert_eq!(
+        vertices[0].tex_coords,
+        [0.75, 0.0],
+        "BC atlas resolution must not reinterpret cooldown progress as a texture U"
+    );
+    assert_eq!(
+        vertices[1].tex_coords,
+        [0.75, 0.0],
+        "all BC cooldown vertices must retain the same radial progress"
+    );
+    assert!(
+        (vertices[0].mask_tex_coords[0]
+            - remap_bc_entry_uv(0.2, entry.uv_x, entry.uv_width, entry.original_width))
+        .abs()
+            < 1e-6
+    );
+    assert!(
+        (vertices[0].mask_tex_coords[1]
+            - remap_bc_entry_uv(0.3, entry.uv_y, entry.uv_height, entry.original_height))
+        .abs()
+            < 1e-6
+    );
+    assert!(
+        (vertices[1].mask_tex_coords[0]
+            - remap_bc_entry_uv(0.8, entry.uv_x, entry.uv_width, entry.original_width))
+        .abs()
+            < 1e-6
+    );
+    assert!(
+        (vertices[1].mask_tex_coords[1]
+            - remap_bc_entry_uv(0.9, entry.uv_y, entry.uv_height, entry.original_height))
+        .abs()
+            < 1e-6
+    );
 }
 
 #[test]

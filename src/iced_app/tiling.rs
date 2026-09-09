@@ -3,6 +3,8 @@
 use crate::render::{BlendMode, QuadBatch};
 use iced::{Point, Rectangle, Size};
 
+use super::texture_gradient::{TextureGradient, frame_gradient};
+
 pub(super) fn crop_path_for_subregion(tex_path: &str, uvs: &Rectangle) -> (String, Rectangle) {
     let is_full = (uvs.x).abs() < 0.001
         && (uvs.y).abs() < 0.001
@@ -207,6 +209,7 @@ struct StandardTileConfig {
     tile_w: f32,
     tile_h: f32,
     tint: [f32; 4],
+    gradient: Option<TextureGradient>,
 }
 
 /// Emit tiled texture quads (horizontal, vertical, or both).
@@ -222,7 +225,7 @@ pub(super) fn emit_tiled_texture(
         return;
     }
 
-    let config = standard_tile_config(tex_path, uvs, f, alpha);
+    let config = standard_tile_config(tex_path, uvs, f, alpha, bounds);
     emit_standard_tiled_texture(batch, bounds, &config, f);
 }
 
@@ -253,6 +256,7 @@ fn standard_tile_config(
     uvs: &Rectangle,
     f: &crate::widget::Frame,
     alpha: f32,
+    gradient_bounds: Rectangle,
 ) -> StandardTileConfig {
     let (cropped_path, cropped_uvs) = crop_path_for_subregion(tex_path, uvs);
     let (tile_w, tile_h) = tile_dimensions(f, cropped_uvs.width, cropped_uvs.height);
@@ -263,6 +267,7 @@ fn standard_tile_config(
         tile_w,
         tile_h,
         tint: frame_tint(f, alpha),
+        gradient: frame_gradient(f, gradient_bounds),
     }
 }
 
@@ -300,6 +305,7 @@ fn emit_standard_horiz_tiles(
             tile_w: config.tile_w,
             tint: config.tint,
             blend,
+            gradient: config.gradient,
         },
     );
 }
@@ -319,6 +325,7 @@ fn emit_standard_vert_tiles(
             tile_h: config.tile_h,
             tint: config.tint,
             blend,
+            gradient: config.gradient,
         },
     );
 }
@@ -339,6 +346,7 @@ fn emit_standard_grid_tiles(
             tile_h: config.tile_h,
             tint: config.tint,
             blend,
+            gradient: config.gradient,
         },
     );
 }
@@ -353,6 +361,7 @@ fn emit_uv_repeat_tiled(
     alpha: f32,
 ) {
     let tint = frame_tint(f, alpha);
+    let gradient = frame_gradient(f, bounds);
     let info = analyze_uv_repeat(raw);
     let tile_size = uv_repeat_tile_size(f, bounds, &info);
 
@@ -366,6 +375,7 @@ fn emit_uv_repeat_tiled(
                 tile_w: tile_size.0,
                 tint,
                 blend: f.blend_mode,
+                gradient,
             },
         );
         return;
@@ -379,6 +389,7 @@ fn emit_uv_repeat_tiled(
         tile_size,
         tint,
         f.blend_mode,
+        gradient,
     );
 }
 
@@ -390,6 +401,7 @@ fn emit_standard_uv_repeat_tiles(
     tile_size: (f32, f32),
     tint: [f32; 4],
     blend: BlendMode,
+    gradient: Option<TextureGradient>,
 ) {
     let (cropped_path, cropped_uvs) = uv_repeat_region(tex_path, info);
     match info.dir {
@@ -403,6 +415,7 @@ fn emit_standard_uv_repeat_tiles(
                     tile_h: tile_size.1,
                     tint,
                     blend,
+                    gradient,
                 },
             );
         }
@@ -417,6 +430,7 @@ fn emit_standard_uv_repeat_tiles(
                     tile_h: tile_size.1,
                     tint,
                     blend,
+                    gradient,
                 },
             );
         }
@@ -468,7 +482,17 @@ fn emit_rotated_horiz_tiles(batch: &mut QuadBatch, strip: RotatedHorizTileStrip<
             [u_max, v_start],            // BR: bottom of strip, left side of V tile
             [u_max, v_start + v_extent], // BL: bottom of strip, right side of V tile
         ];
-        batch.push_textured_path_uv4(tile_bounds, uvs, &cropped_path, strip.tint, strip.blend);
+        if let Some(gradient) = strip.gradient {
+            batch.push_textured_path_uv4_colors(
+                tile_bounds,
+                uvs,
+                &cropped_path,
+                gradient.colors(tile_bounds, strip.tint),
+                strip.blend,
+            );
+        } else {
+            batch.push_textured_path_uv4(tile_bounds, uvs, &cropped_path, strip.tint, strip.blend);
+        }
         x += strip.tile_w;
     }
 }
@@ -480,6 +504,7 @@ struct RotatedHorizTileStrip<'a> {
     tile_w: f32,
     tint: [f32; 4],
     blend: BlendMode,
+    gradient: Option<TextureGradient>,
 }
 
 /// Emit horizontally tiled texture quads.
@@ -490,16 +515,35 @@ pub(super) struct HorizTileStrip<'a> {
     pub(super) tile_w: f32,
     pub(super) tint: [f32; 4],
     pub(super) blend: BlendMode,
+    pub(super) gradient: Option<TextureGradient>,
+}
+
+fn push_tiled_quad(
+    batch: &mut QuadBatch,
+    bounds: Rectangle,
+    uvs: Rectangle,
+    path: &str,
+    tint: [f32; 4],
+    blend: BlendMode,
+    gradient: Option<TextureGradient>,
+) {
+    if let Some(gradient) = gradient {
+        batch.push_textured_path_uv_colors(bounds, uvs, path, gradient.colors(bounds, tint), blend);
+    } else {
+        batch.push_textured_path_uv(bounds, uvs, path, tint, blend);
+    }
 }
 
 pub(super) fn emit_horiz_tiles(batch: &mut QuadBatch, strip: HorizTileStrip<'_>) {
     if strip.tile_w <= 1.0 {
-        batch.push_textured_path_uv(
+        push_tiled_quad(
+            batch,
             strip.bounds,
             *strip.uvs,
             strip.tex_path,
             strip.tint,
             strip.blend,
+            strip.gradient,
         );
         return;
     }
@@ -517,12 +561,14 @@ pub(super) fn emit_horiz_tiles(batch: &mut QuadBatch, strip: HorizTileStrip<'_>)
             strip.uvs.width
         };
         let tile_uvs = Rectangle::new(strip.uvs.position(), Size::new(uv_w, strip.uvs.height));
-        batch.push_textured_path_uv(
+        push_tiled_quad(
+            batch,
             tile_bounds,
             tile_uvs,
             strip.tex_path,
             strip.tint,
             strip.blend,
+            strip.gradient,
         );
         x += strip.tile_w;
     }
@@ -536,6 +582,7 @@ pub(super) struct VertTileStrip<'a> {
     pub(super) tile_h: f32,
     pub(super) tint: [f32; 4],
     pub(super) blend: BlendMode,
+    pub(super) gradient: Option<TextureGradient>,
 }
 
 pub(super) fn emit_vert_tiles(batch: &mut QuadBatch, strip: VertTileStrip<'_>) {
@@ -552,12 +599,14 @@ pub(super) fn emit_vert_tiles(batch: &mut QuadBatch, strip: VertTileStrip<'_>) {
             strip.uvs.height
         };
         let tile_uvs = Rectangle::new(strip.uvs.position(), Size::new(strip.uvs.width, uv_h));
-        batch.push_textured_path_uv(
+        push_tiled_quad(
+            batch,
             tile_bounds,
             tile_uvs,
             strip.tex_path,
             strip.tint,
             strip.blend,
+            strip.gradient,
         );
         y += strip.tile_h;
     }
@@ -571,6 +620,7 @@ pub(super) struct GridTileStrip<'a> {
     pub(super) tile_h: f32,
     pub(super) tint: [f32; 4],
     pub(super) blend: BlendMode,
+    pub(super) gradient: Option<TextureGradient>,
 }
 
 /// Emit grid-tiled texture quads (both horizontal and vertical).
@@ -593,12 +643,14 @@ pub(super) fn emit_grid_tiles(batch: &mut QuadBatch, strip: GridTileStrip<'_>) {
                 strip.uvs.height
             };
             let tile_uvs = Rectangle::new(strip.uvs.position(), Size::new(uv_w, uv_h));
-            batch.push_textured_path_uv(
+            push_tiled_quad(
+                batch,
                 tile_bounds,
                 tile_uvs,
                 strip.tex_path,
                 strip.tint,
                 strip.blend,
+                strip.gradient,
             );
             x += strip.tile_w;
         }
@@ -647,7 +699,13 @@ mod tests {
         };
         let uvs = Rectangle::new(Point::new(0.25, 0.5), Size::new(0.5, 0.25));
 
-        let config = standard_tile_config("Interface/Test", &uvs, &frame, 0.5);
+        let config = standard_tile_config(
+            "Interface/Test",
+            &uvs,
+            &frame,
+            0.5,
+            Rectangle::new(Point::ORIGIN, Size::new(128.0, 128.0)),
+        );
 
         assert_eq!(
             config.cropped_path,
@@ -671,7 +729,13 @@ mod tests {
         };
         let uvs = Rectangle::new(Point::new(0.0, 0.003906), Size::new(0.015625, 0.164063));
 
-        let config = standard_tile_config("Interface/FrameGeneral/UIFrameTabs", &uvs, &frame, 1.0);
+        let config = standard_tile_config(
+            "Interface/FrameGeneral/UIFrameTabs",
+            &uvs,
+            &frame,
+            1.0,
+            Rectangle::new(Point::ORIGIN, Size::new(1.0, 42.0)),
+        );
 
         assert_eq!(config.tile_w, 1.0);
         assert_eq!(config.tile_h, 42.0);
@@ -686,7 +750,13 @@ mod tests {
         };
         let uvs = Rectangle::new(Point::new(0.0, 0.000488), Size::new(0.125, 0.0625));
 
-        let config = standard_tile_config("Interface\\buttons\\128redbutton", &uvs, &frame, 1.0);
+        let config = standard_tile_config(
+            "Interface\\buttons\\128redbutton",
+            &uvs,
+            &frame,
+            1.0,
+            Rectangle::new(Point::ORIGIN, Size::new(128.0, 128.0)),
+        );
 
         assert_eq!(config.tile_w, 64.0);
         assert_eq!(config.tile_h, 128.0);
@@ -711,6 +781,7 @@ mod tests {
                 tile_w: 1.0,
                 tint: [1.0, 1.0, 1.0, 1.0],
                 blend: BlendMode::Alpha,
+                gradient: None,
             },
         );
 

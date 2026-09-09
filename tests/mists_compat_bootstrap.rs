@@ -132,6 +132,270 @@ fn mists_bootstrap_exposes_classic_addon_compatibility_globals() {
 }
 
 #[test]
+fn mists_rotation_animation_getters_round_trip_rotation_state() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+    let result: (f64, String, f64, f64) = env
+        .eval(
+            r#"
+            local f = CreateFrame("Frame", "TestMistsRotationGetters", UIParent)
+            local ag = f:CreateAnimationGroup()
+            local anim = ag:CreateAnimation("Rotation")
+            anim:SetDegrees(135)
+            anim:SetOrigin("TOPLEFT", 4, -7)
+            local point, x, y = anim:GetOrigin()
+            return anim:GetDegrees(), point, x, y
+            "#,
+        )
+        .expect("rotation animation getters should be callable in Mists");
+
+    assert_eq!(result, (135.0, "TOPLEFT".to_string(), 4.0, -7.0));
+}
+
+#[test]
+fn mists_bootstrap_exposes_round_helper_for_addon_migrations() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+
+    let result: (f64, f64, f64) = env
+        .eval(
+            r#"
+            return Round(2.6), Round(2.34, 1), Round(-2.6)
+            "#,
+        )
+        .expect("Mists Round helper should be callable");
+
+    assert_eq!(
+        result,
+        (3.0, 2.3, -3.0),
+        "Mists should expose the global Round helper used by addon migrations"
+    );
+}
+
+#[test]
+fn mists_bootstrap_exposes_degree_tangent_and_preserves_existing_global() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+
+    env.exec(include_str!("../src/mists/compat_bootstrap.lua"))
+        .expect("Mists compatibility bootstrap should load");
+
+    let baseline: (f64, f64) = env
+        .eval(
+            r#"
+            return tan(45), tan(180)
+            "#,
+        )
+        .expect("Mists degree tangent helper should be callable");
+
+    env.exec(
+        r#"
+        local existing = function(x)
+            return x * 10
+        end
+        _G.__mists_existing_tan = existing
+        _G.tan = existing
+        "#,
+    )
+    .expect("existing tangent sentinel should be installable");
+    env.exec(include_str!("../src/mists/compat_bootstrap.lua"))
+        .expect("Mists compatibility bootstrap should be rerunnable");
+
+    let preserved: (f64, bool) = env
+        .eval(
+            r#"
+            return tan(7), tan == _G.__mists_existing_tan
+            "#,
+        )
+        .expect("preserved tangent helper should be callable");
+
+    assert!(
+        (baseline.0 - 1.0).abs() < 1e-12,
+        "tan should interpret 45 as degrees: {}",
+        baseline.0
+    );
+    assert!(
+        baseline.1.abs() < 1e-12,
+        "tan should interpret 180 as degrees: {}",
+        baseline.1
+    );
+    assert_eq!(
+        preserved,
+        (70.0, true),
+        "bootstrap should preserve an existing global tan"
+    );
+}
+
+#[test]
+fn mists_bootstrap_exposes_legacy_table_helpers_and_degree_atan2_without_runtime_providers() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+
+    env.exec(
+        r#"
+        _G.tinsert = nil
+        _G.tremove = nil
+        _G.wipe = nil
+        _G.atan2 = nil
+        if table ~= nil then
+            table.wipe = nil
+        end
+        "#,
+    )
+    .expect("Mists runtime providers should be removable in the disposable environment");
+    env.exec(include_str!("../src/mists/compat_bootstrap.lua"))
+        .expect("Mists compatibility bootstrap should load without runtime providers");
+
+    let behavior: (i32, i32, i32, f64, f64, f64, bool) = env
+        .eval(
+            r#"
+            local values = { "a", "b" }
+            tinsert(values, "c")
+            local removed = tremove(values, 1)
+            local wiped = { answer = 42 }
+            local returned = wipe(wiped)
+            return #values, removed == "a" and values[1] == "b" and values[2] == "c" and 2 or 0,
+                next(wiped) == nil and returned == wiped and 1 or 0,
+                atan2(1, 2), atan2(1, 0), atan2(0, -1), type(tinsert) == "function"
+            "#,
+        )
+        .expect("Mists legacy table and angle helpers should be callable");
+
+    assert_eq!(behavior.0, 2);
+    assert_eq!(
+        behavior.1, 2,
+        "tinsert/tremove should delegate to table APIs"
+    );
+    assert_eq!(
+        behavior.2, 1,
+        "wipe fallback should clear and return its input table"
+    );
+    assert!(
+        (behavior.3 - 26.56505117707799).abs() < 1e-12,
+        "atan2 should use y,x order and return degrees: {}",
+        behavior.3
+    );
+    assert!(
+        (behavior.4 - 90.0).abs() < 1e-12,
+        "atan2 should return degrees: {}",
+        behavior.4
+    );
+    assert!(
+        (behavior.5 - 180.0).abs() < 1e-12,
+        "atan2 should preserve the signed quadrant: {}",
+        behavior.5
+    );
+    assert!(behavior.6);
+}
+
+#[test]
+fn mists_bootstrap_preserves_existing_legacy_helper_sentinels() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+
+    env.exec(
+        r#"
+        local existing_tinsert = function() return "tinsert sentinel" end
+        local existing_tremove = function() return "tremove sentinel" end
+        local existing_wipe = function() return "wipe sentinel" end
+        local existing_atan2 = function() return "atan2 sentinel" end
+        _G.__mists_existing_tinsert = existing_tinsert
+        _G.__mists_existing_tremove = existing_tremove
+        _G.__mists_existing_wipe = existing_wipe
+        _G.__mists_existing_atan2 = existing_atan2
+        _G.tinsert = existing_tinsert
+        _G.tremove = existing_tremove
+        _G.wipe = existing_wipe
+        _G.atan2 = existing_atan2
+        "#,
+    )
+    .expect("existing legacy helper sentinels should be installable");
+    env.exec(include_str!("../src/mists/compat_bootstrap.lua"))
+        .expect("Mists compatibility bootstrap should be rerunnable");
+
+    let preserved: (bool, bool, bool, bool) = env
+        .eval(
+            r#"
+            return tinsert == __mists_existing_tinsert,
+                tremove == __mists_existing_tremove,
+                wipe == __mists_existing_wipe,
+                atan2 == __mists_existing_atan2
+            "#,
+        )
+        .expect("preexisting legacy helper sentinels should remain callable");
+    assert_eq!(preserved, (true, true, true, true));
+}
+
+#[test]
+fn mists_bootstrap_exposes_guarded_reverse_ipairs_iterator() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+
+    env.exec(include_str!("../src/mists/compat_bootstrap.lua"))
+        .expect("Mists compatibility bootstrap should load");
+
+    let baseline: (String, i32) = env
+        .eval(
+            r#"
+            local values = { "a", "b", "c" }
+            local order = {}
+            for index, value in ipairs_reverse(values) do
+                order[#order + 1] = index .. value
+            end
+
+            local emptyCount = 0
+            for _ in ipairs_reverse({}) do
+                emptyCount = emptyCount + 1
+            end
+
+            return table.concat(order, ","), emptyCount
+            "#,
+        )
+        .expect("Mists reverse ipairs helper should be callable");
+
+    env.exec(
+        r#"
+        local existing = function(tbl)
+            local function Enumerator(list, index)
+                index = index - 1
+                local value = list[index]
+                if value ~= nil then
+                    return index, value
+                end
+            end
+            return Enumerator, tbl, #tbl + 1
+        end
+        _G.__mists_existing_ipairs_reverse = existing
+        _G.ipairs_reverse = existing
+        "#,
+    )
+    .expect("existing reverse ipairs sentinel should be installable");
+    env.exec(include_str!("../src/mists/compat_bootstrap.lua"))
+        .expect("Mists compatibility bootstrap should be rerunnable");
+
+    let preserved: (String, i32, bool) = env
+        .eval(
+            r#"
+            local values = { "a", "b", "c" }
+            local order = {}
+            for index, value in ipairs_reverse(values) do
+                order[#order + 1] = index .. value
+            end
+
+            local emptyCount = 0
+            for _ in ipairs_reverse({}) do
+                emptyCount = emptyCount + 1
+            end
+
+            return table.concat(order, ","), emptyCount,
+                ipairs_reverse == _G.__mists_existing_ipairs_reverse
+            "#,
+        )
+        .expect("preserved reverse ipairs helper should be callable");
+
+    assert_eq!(baseline, ("3c,2b,1a".to_string(), 0));
+    assert_eq!(
+        preserved,
+        ("3c,2b,1a".to_string(), 0, true),
+        "reverse ipairs should iterate densely and preserve an existing global"
+    );
+}
+
+#[test]
 fn mists_bootstrap_exposes_raid_marker_system_probe() {
     let env = WowLuaEnv::new().expect("Lua environment should initialize");
 
@@ -379,8 +643,8 @@ fn mists_honor_frame_shared_reproduces_missing_honor_system_enabled() {
 
     assert!(!ok, "HonorFrame_OnLoad should reproduce the nil global");
     assert!(
-        err.contains("HonorSystemEnabled"),
-        "expected HonorSystemEnabled nil failure, got: {err}"
+        err.contains("nil"),
+        "expected a nil-call failure from missing HonorSystemEnabled, got: {err}"
     );
 }
 

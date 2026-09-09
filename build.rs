@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=installer/wow-sim.ico");
@@ -12,12 +13,53 @@ fn main() {
         return;
     }
 
+    configure_windows_gnu_crt();
+
     let mut res = winresource::WindowsResource::new();
     res.set_icon("installer/wow-sim.ico");
     if let Err(error) = res.compile() {
         // On hosts without a usable resource compiler the binary should still
         // link; surface the failure as a cargo warning instead of aborting.
         println!("cargo:warning=failed to embed Windows icon resource: {error}");
+    }
+}
+
+fn configure_windows_gnu_crt() {
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("gnu") {
+        return;
+    }
+
+    // rilua's Windows time bindings use the MSVC spelling (`gmtime_s`),
+    // while MinGW's CRT import libraries expose the 64-bit entry points.
+    // Keep this compatibility at the final link boundary so the external
+    // rilua dependency remains untouched and MSVC keeps its native bindings.
+    println!(
+        "cargo:rustc-link-arg=-Wl,-u,_gmtime64_s,-u,_localtime64_s,--defsym,gmtime_s=_gmtime64_s,--defsym,localtime_s=_localtime64_s"
+    );
+
+    // Some MinGW distributions do not put their UCRT import library in the
+    // linker's default search path even though their gcc driver can locate
+    // it. Ask the active compiler for that path instead of baking in a
+    // machine-specific installation path.
+    for compiler in ["x86_64-w64-mingw32-gcc", "gcc"] {
+        let Ok(output) = Command::new(compiler)
+            .args(["-print-file-name=libucrt.a"])
+            .output()
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let printed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let path = PathBuf::from(&printed);
+        if path.file_name().and_then(|name| name.to_str()) != Some("libucrt.a") {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            println!("cargo:rustc-link-search=native={}", parent.display());
+            break;
+        }
     }
 }
 

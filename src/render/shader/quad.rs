@@ -15,6 +15,8 @@ pub const FLAG_COOLDOWN_SWIPE: u32 = 0x200;
 /// Flag bit: desaturate (convert to greyscale).
 pub const FLAG_DESATURATE: u32 = 0x400;
 
+/// Flag bit: make fragments outside the original local UV rectangle transparent.
+pub const FLAG_CLAMP_TO_BLACK: u32 = 0x1000;
 /// Flag bit: mask samples use alpha channel coverage instead of RGB intensity.
 pub const FLAG_MASK_ALPHA_COVERAGE: u32 = 0x800;
 
@@ -40,6 +42,9 @@ pub struct QuadVertex {
     /// Quad-local UV coordinates (0-1, preserved across atlas remapping).
     /// Used by effects like circle clip that need quad-relative position.
     pub local_uv: [f32; 2],
+    /// Original source UV coordinates before atlas remapping.
+    /// Used by clamp-to-black boundary testing.
+    pub source_uv: [f32; 2],
     /// Mask texture index (-1 = no mask, -2 = pending resolution, >=0 = atlas tier).
     pub mask_tex_index: i32,
     /// Mask texture UV coordinates (remapped to atlas during prepare).
@@ -50,8 +55,8 @@ impl QuadVertex {
     /// Vertex buffer layout for wgpu.
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         // Field offsets in bytes (all f32=4 bytes, i32=4, u32=4):
-        // position(8) tex_coords(8) color(16) tex_index(4) flags(4)
-        // local_uv(8) mask_tex_index(4) mask_tex_coords(8)
+        // position(0) tex_coords(8) color(16) tex_index(32) flags(36)
+        // local_uv(40) source_uv(48) mask_tex_index(56) mask_tex_coords(60)
         const ATTRIBUTES: &[wgpu::VertexAttribute] = &[
             vertex_attribute(0, 0, FLOAT2),                         // position
             vertex_attribute(8, 1, FLOAT2),                         // tex_coords
@@ -59,8 +64,9 @@ impl QuadVertex {
             vertex_attribute(32, 3, wgpu::VertexFormat::Sint32),    // tex_index
             vertex_attribute(36, 4, wgpu::VertexFormat::Uint32),    // flags
             vertex_attribute(40, 5, FLOAT2),                        // local_uv
-            vertex_attribute(48, 6, wgpu::VertexFormat::Sint32),    // mask_tex_index
-            vertex_attribute(52, 7, FLOAT2),                        // mask_tex_coords
+            vertex_attribute(48, 6, FLOAT2),                        // source_uv
+            vertex_attribute(56, 7, wgpu::VertexFormat::Sint32),    // mask_tex_index
+            vertex_attribute(60, 8, FLOAT2),                        // mask_tex_coords
         ];
 
         wgpu::VertexBufferLayout {
@@ -253,6 +259,7 @@ struct QuadVertexSet {
     positions: [[f32; 2]; 4],
     tex_coords: [[f32; 2]; 4],
     local_uvs: [[f32; 2]; 4],
+    source_uvs: [[f32; 2]; 4],
     mask_tex_coords: [[f32; 2]; 4],
 }
 
@@ -322,6 +329,7 @@ impl QuadBatch {
             positions: rect_corners(bounds),
             tex_coords,
             local_uvs: tex_coords,
+            source_uvs: tex_coords,
             mask_tex_coords: zero_quad_uvs(),
         };
         self.push_quad_vertices(vertices, color, tex_index, blend_mode as u32);
@@ -347,6 +355,7 @@ impl QuadBatch {
                 tex_index,
                 flags,
                 local_uv: uvs[i],
+                source_uv: uvs[i],
                 mask_tex_index: -1,
                 mask_tex_coords: [0.0, 0.0],
             });
@@ -374,6 +383,7 @@ impl QuadBatch {
             positions: rect_corners(bounds),
             tex_coords: [[progress, 0.0]; 4],
             local_uvs: unit_quad_uvs(),
+            source_uvs: unit_quad_uvs(),
             mask_tex_coords: [
                 [low_x, low_y],
                 [high_x, low_y],
@@ -401,6 +411,7 @@ impl QuadBatch {
                 tex_index,
                 flags,
                 local_uv: vertices.local_uvs[i],
+                source_uv: vertices.source_uvs[i],
                 mask_tex_index: -1,
                 mask_tex_coords: vertices.mask_tex_coords[i],
             });
@@ -468,6 +479,7 @@ impl QuadBatch {
                 tex_index: -1,
                 flags: BlendMode::Alpha as u32,
                 local_uv: uv,
+                source_uv: uv,
                 mask_tex_index: -1,
                 mask_tex_coords: [0.0, 0.0],
             });
@@ -550,6 +562,33 @@ impl QuadBatch {
             .push(TextureRequest::new(path, vertex_start, 4));
     }
 
+    /// Push a textured quad preserving pre-atlas local UVs for clamp-to-black.
+    pub fn push_textured_path_uv_clamp_to_black(
+        &mut self,
+        bounds: Rectangle,
+        uvs: Rectangle,
+        source_uvs: Rectangle,
+        path: &str,
+        color: [f32; 4],
+        blend_mode: BlendMode,
+    ) {
+        let vertex_start = self.vertices.len() as u32;
+        let vertices = QuadVertexSet {
+            positions: rect_corners(bounds),
+            tex_coords: rect_corners(uvs),
+            local_uvs: rect_corners(Rectangle::new(
+                iced::Point::ORIGIN,
+                iced::Size::new(1.0, 1.0),
+            )),
+            source_uvs: rect_corners(source_uvs),
+            mask_tex_coords: zero_quad_uvs(),
+        };
+        self.push_quad_vertices(vertices, color, -2, blend_mode as u32 | FLAG_CLAMP_TO_BLACK);
+        push_quad_indices(&mut self.indices, vertex_start);
+        self.texture_requests
+            .push(TextureRequest::new(path, vertex_start, 4));
+    }
+
     /// Push a textured triangle by path (for deferred texture loading).
     pub fn push_textured_triangle_path(
         &mut self,
@@ -592,4 +631,82 @@ fn push_quad_indices(indices: &mut Vec<u32>, base_index: u32) {
         base_index + 2,
         base_index + 3,
     ]);
+}
+
+#[cfg(test)]
+mod clamp_to_black_tests {
+    use super::{BlendMode, FLAG_CLAMP_TO_BLACK, QuadBatch};
+    use iced::{Point, Rectangle, Size};
+    #[test]
+    fn clamp_to_black_quad_preserves_pre_atlas_source_coords() {
+        let mut batch = QuadBatch::new();
+        batch.push_textured_path_uv_clamp_to_black(
+            Rectangle::new(Point::ORIGIN, Size::new(10.0, 10.0)),
+            Rectangle::new(Point::new(0.2, 0.3), Size::new(0.5, 0.4)),
+            Rectangle::new(
+                Point::new(-0.001489, -0.001489),
+                Size::new(1.002978, 1.002978),
+            ),
+            "test",
+            [1.0; 4],
+            BlendMode::Additive,
+        );
+        assert!(
+            batch
+                .vertices
+                .iter()
+                .all(|v| v.flags & FLAG_CLAMP_TO_BLACK != 0)
+        );
+        assert_eq!(batch.vertices[0].local_uv, [0.0, 0.0]);
+        assert_eq!(batch.vertices[0].source_uv, [-0.001489, -0.001489]);
+        assert!((batch.vertices[2].source_uv[0] - 1.001489).abs() < 1e-6);
+        assert!((batch.vertices[2].source_uv[1] - 1.001489).abs() < 1e-6);
+    }
+
+    #[test]
+    fn generic_textured_quad_has_no_clamp_to_black_flag() {
+        let mut batch = QuadBatch::new();
+        batch.push_textured_path_uv(
+            Rectangle::new(Point::ORIGIN, Size::new(1.0, 1.0)),
+            Rectangle::new(Point::ORIGIN, Size::new(1.0, 1.0)),
+            "test",
+            [1.0; 4],
+            BlendMode::Alpha,
+        );
+        assert!(
+            batch
+                .vertices
+                .iter()
+                .all(|v| v.flags & FLAG_CLAMP_TO_BLACK == 0)
+        );
+    }
+
+    #[test]
+    fn vertex_descriptor_matches_quad_vertex_memory_layout() {
+        let layout = super::QuadVertex::desc();
+        assert_eq!(
+            layout.array_stride,
+            std::mem::size_of::<super::QuadVertex>() as wgpu::BufferAddress
+        );
+        assert_eq!(layout.array_stride, 68);
+
+        let attributes = layout.attributes;
+        assert_eq!(attributes.len(), 9);
+        let expected = [
+            (0, 0, wgpu::VertexFormat::Float32x2),
+            (8, 1, wgpu::VertexFormat::Float32x2),
+            (16, 2, wgpu::VertexFormat::Float32x4),
+            (32, 3, wgpu::VertexFormat::Sint32),
+            (36, 4, wgpu::VertexFormat::Uint32),
+            (40, 5, wgpu::VertexFormat::Float32x2),
+            (48, 6, wgpu::VertexFormat::Float32x2),
+            (56, 7, wgpu::VertexFormat::Sint32),
+            (60, 8, wgpu::VertexFormat::Float32x2),
+        ];
+        for (attribute, (offset, location, format)) in attributes.iter().zip(expected) {
+            assert_eq!(attribute.offset, offset);
+            assert_eq!(attribute.shader_location, location);
+            assert_eq!(attribute.format, format);
+        }
+    }
 }

@@ -50,6 +50,19 @@ impl QuadBatch {
         color: [f32; 4],
         blend_mode: BlendMode,
     ) {
+        self.push_textured_path_uv4_colors(bounds, uvs, path, [color; 4], blend_mode);
+    }
+
+    /// Push a textured quad by path with explicit per-vertex UVs and colors.
+    /// `uvs` and `colors` are both ordered [TL, TR, BR, BL].
+    pub(crate) fn push_textured_path_uv4_colors(
+        &mut self,
+        bounds: Rectangle,
+        uvs: [[f32; 2]; 4],
+        path: &str,
+        colors: [[f32; 4]; 4],
+        blend_mode: BlendMode,
+    ) {
         let vertex_start = self.vertices.len() as u32;
         let base_index = self.vertices.len() as u32;
         let positions = quad_positions(bounds);
@@ -59,10 +72,11 @@ impl QuadBatch {
             self.vertices.push(QuadVertex {
                 position: positions[i],
                 tex_coords: uvs[i],
-                color,
+                color: colors[i],
                 tex_index: -2,
                 flags,
                 local_uv: uvs[i],
+                source_uv: uvs[i],
                 mask_tex_index: -1,
                 mask_tex_coords: [0.0, 0.0],
             });
@@ -70,6 +84,66 @@ impl QuadBatch {
 
         self.push_quad_indices(base_index);
         self.push_texture_request(path, vertex_start, 4);
+    }
+    /// Push a rotated textured quad with separate raw source UVs for clamping.
+    pub(crate) fn push_textured_path_uv4_clamp_to_black(
+        &mut self,
+        bounds: Rectangle,
+        sample_uvs: [[f32; 2]; 4],
+        source_uvs: [[f32; 2]; 4],
+        path: &str,
+        colors: [[f32; 4]; 4],
+        blend_mode: BlendMode,
+    ) {
+        let vertex_start = self.vertices.len() as u32;
+        let base_index = vertex_start;
+        let positions = quad_positions(bounds);
+        let flags = blend_mode as u32 | super::FLAG_CLAMP_TO_BLACK;
+        for i in 0..4 {
+            self.vertices.push(QuadVertex {
+                position: positions[i],
+                tex_coords: sample_uvs[i],
+                color: colors[i],
+                tex_index: -2,
+                flags,
+                local_uv: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]][i],
+                source_uv: source_uvs[i],
+                mask_tex_index: -1,
+                mask_tex_coords: [0.0, 0.0],
+            });
+        }
+        self.indices.extend_from_slice(&[
+            base_index,
+            base_index + 1,
+            base_index + 3,
+            base_index + 1,
+            base_index + 2,
+            base_index + 3,
+        ]);
+        self.push_texture_request(path, vertex_start, 4);
+    }
+
+    /// Push a textured quad by path with explicit UV-rectangle colors.
+    pub(crate) fn push_textured_path_uv_colors(
+        &mut self,
+        bounds: Rectangle,
+        uvs: Rectangle,
+        path: &str,
+        colors: [[f32; 4]; 4],
+        blend_mode: BlendMode,
+    ) {
+        self.push_textured_path_uv4_colors(bounds, rect_uvs(uvs), path, colors, blend_mode);
+    }
+
+    /// Push a full-coverage textured quad by path with per-vertex colors.
+    pub(crate) fn push_textured_path_colors(
+        &mut self,
+        bounds: Rectangle,
+        path: &str,
+        colors: [[f32; 4]; 4],
+        blend_mode: BlendMode,
+    ) {
+        self.push_textured_path_uv4_colors(bounds, unit_uvs(), path, colors, blend_mode);
     }
 
     /// Push a horizontal 3-slice texture with custom blend mode.
@@ -361,4 +435,17 @@ fn border_rects(bounds: Rectangle, thickness: f32) -> [Rectangle; 4] {
             Size::new(thickness, bounds.height - thickness * 2.0),
         ),
     ]
+}
+
+fn rect_uvs(rect: Rectangle) -> [[f32; 2]; 4] {
+    [
+        [rect.x, rect.y],
+        [rect.x + rect.width, rect.y],
+        [rect.x + rect.width, rect.y + rect.height],
+        [rect.x, rect.y + rect.height],
+    ]
+}
+
+fn unit_uvs() -> [[f32; 2]; 4] {
+    [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
 }

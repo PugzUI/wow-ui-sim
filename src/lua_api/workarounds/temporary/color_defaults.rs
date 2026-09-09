@@ -56,6 +56,24 @@ if CreateColor == nil then
     return __wow_make_color(r, g, b, a)
   end
 end
+if CreateColorFromHexString == nil then
+  function CreateColorFromHexString(hex)
+    local value = tostring(hex or ""):gsub("^|c", ""):gsub("^#", "")
+    if #value == 6 then value = "ff" .. value end
+    local a = tonumber(value:sub(1, 2), 16) or 255
+    local r = tonumber(value:sub(3, 4), 16) or 255
+    local g = tonumber(value:sub(5, 6), 16) or 255
+    local b = tonumber(value:sub(7, 8), 16) or 255
+    return __wow_make_color(r / 255, g / 255, b / 255, a / 255)
+  end
+end
+if WrapTextInColorCode == nil then
+  function WrapTextInColorCode(text, colorCode)
+    local code = tostring(colorCode or "ffffffff"):gsub("^|c", "")
+    return "|c" .. code .. tostring(text or "") .. "|r"
+  end
+end
+
 
 local function __wow_color_merge_namespace(existing, defaults)
   local namespace = type(existing) == "table" and existing or {}
@@ -170,6 +188,10 @@ mod tests {
                 if color:GenerateHexColor() ~= "FF3F7FBF" then return "hex" end
                 if color:GenerateHexColorNoAlpha() ~= "4080BF" then return "hex_no_alpha" end
                 if color:WrapTextInColorCode("Ready") ~= "|cFF3F7FBFReady|r" then return "color_wrap" end
+                local hexColor = CreateColorFromHexString("ff1f1e21")
+                local hr, hg, hb, ha = hexColor:GetRGBA()
+                if math.abs(hr - (0x1f / 255)) > 0.0001 or math.abs(hg - (0x1e / 255)) > 0.0001
+                    or math.abs(hb - (0x21 / 255)) > 0.0001 or ha ~= 1 then return "hex_color" end
                 if QuestDifficultyColors.impossible.g ~= 0.10 then return "quest" end
                 if QuestDifficultyHighlightColors.standard.g ~= 1.00 then return "highlight" end
                 return "ok"

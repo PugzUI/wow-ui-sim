@@ -165,7 +165,7 @@ fn visible_descendants_at_point_by_z_order(
     child_ids
 }
 
-/// Whether the child's visual bounds (visible+layout_rect, scaled by ui_scale())
+/// Whether the child's visual bounds (visible+layout_rect in renderer units)
 /// contain the screen-space point. Used for hit-test descent through any
 /// visible frame, regardless of mouse-enabled status.
 fn child_visually_contains(child: &crate::widget::Frame, pos: iced::Point) -> bool {
@@ -226,11 +226,10 @@ fn rect_contains_screen_point(rect: Option<crate::LayoutRect>, pos: iced::Point)
     let Some(rect) = rect else {
         return false;
     };
-    let scale = crate::render::texture::ui_scale();
-    let x = rect.x * scale;
-    let y = rect.y * scale;
-    let w = rect.width * scale;
-    let h = rect.height * scale;
+    let x = rect.x;
+    let y = rect.y;
+    let w = rect.width;
+    let h = rect.height;
     pos.x >= x && pos.x < x + w && pos.y >= y && pos.y < y + h
 }
 

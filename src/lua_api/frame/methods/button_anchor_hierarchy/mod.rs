@@ -278,7 +278,7 @@ fn register_hierarchy_regions(state: &mut LuaState, table: GcRef<Table>) -> LuaR
 
 fn register_hierarchy_creation(state: &mut LuaState, table: GcRef<Table>) -> LuaResult<()> {
     table_set_rust_fn_static(state, table, "CreateTexture", hierarchy::create_texture)?;
-    #[cfg(feature = "client-ptr")]
+    #[cfg(feature = "retail-12-1-0")]
     table_set_rust_fn_static(
         state,
         table,
@@ -538,6 +538,10 @@ const ANIMATION_TIMING_METHODS: &[MethodBinding] = &[
         func: animations::animation_get_smooth_progress,
     },
     MethodBinding {
+        name: "SetSmoothProgress",
+        func: animations::animation_set_smooth_progress,
+    },
+    MethodBinding {
         name: "IsStopped",
         func: animations::animation_is_stopped,
     },
@@ -560,7 +564,9 @@ fn register_animation_config(state: &mut LuaState, table: GcRef<Table>) -> LuaRe
         "SetScaleFrom",
         "SetScaleTo",
         "SetDegrees",
+        "GetDegrees",
         "SetOrigin",
+        "GetOrigin",
     ] {
         let func = match name {
             "SetSmoothing" => animations::animation_set_smoothing,
@@ -570,6 +576,10 @@ fn register_animation_config(state: &mut LuaState, table: GcRef<Table>) -> LuaRe
             "SetToAlpha" => animations::animation_set_to_alpha,
             "GetToAlpha" => animations::animation_get_to_alpha,
             "SetChange" => animations::animation_set_change,
+            "SetDegrees" => animations::animation_set_degrees,
+            "GetDegrees" => animations::animation_get_degrees,
+            "SetOrigin" => animations::animation_set_origin,
+            "GetOrigin" => animations::animation_get_origin,
             _ => animations::animation_config_noop,
         };
         table_set_rust_fn_static(state, table, name, func)?;

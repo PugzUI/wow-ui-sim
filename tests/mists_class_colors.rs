@@ -146,3 +146,22 @@ fn mists_visible_classes_have_color_data() {
         "Mists should expose only classes with RAID_CLASS_COLORS entries"
     );
 }
+
+#[test]
+fn visible_classes_have_localized_names_for_chat_config() {
+    let env = WowLuaEnv::new().expect("Lua environment should initialize");
+    env.exec(
+        r#"
+        LOCALIZED_CLASS_NAMES_MALE = {}
+        LOCALIZED_CLASS_NAMES_FEMALE = {}
+        FillLocalizedClassList(LOCALIZED_CLASS_NAMES_MALE, false)
+        FillLocalizedClassList(LOCALIZED_CLASS_NAMES_FEMALE, true)
+        for classIndex = 1, GetNumClasses() do
+            local name, classFile = GetClassInfo(classIndex)
+            assert(LOCALIZED_CLASS_NAMES_MALE[classFile] == name, classFile .. " male name")
+            assert(LOCALIZED_CLASS_NAMES_FEMALE[classFile] == name, classFile .. " female name")
+        end
+        "#,
+    )
+    .expect("ChatConfig class legends require localized names for every visible class");
+}

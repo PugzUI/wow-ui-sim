@@ -6,6 +6,7 @@ use iced::{Point, Rectangle, Size};
 
 use crate::render::{BlendMode, QuadBatch};
 
+use super::texture_gradient::TextureGradient;
 use super::tiling::{
     GridTileStrip, HorizTileStrip, VertTileStrip, emit_grid_tiles, emit_horiz_tiles,
     emit_vert_tiles,
@@ -27,6 +28,7 @@ pub(super) struct TexturedSlice<'a> {
     pub uvs: TextureUvs,
     pub tint: [f32; 4],
     pub blend: BlendMode,
+    pub gradient: Option<TextureGradient>,
 }
 
 #[derive(Clone, Copy)]
@@ -151,6 +153,7 @@ fn emit_pattern_horiz_tiles(batch: &mut QuadBatch, emit: TilePatternEmit<'_>, ti
             tile_w,
             tint: emit.texture.tint,
             blend: emit.texture.blend,
+            gradient: emit.texture.gradient,
         },
     );
 }
@@ -165,6 +168,7 @@ fn emit_pattern_vert_tiles(batch: &mut QuadBatch, emit: TilePatternEmit<'_>, til
             tile_h,
             tint: emit.texture.tint,
             blend: emit.texture.blend,
+            gradient: emit.texture.gradient,
         },
     );
 }
@@ -185,6 +189,7 @@ fn emit_pattern_grid_tiles(
             tile_h,
             tint: emit.texture.tint,
             blend: emit.texture.blend,
+            gradient: emit.texture.gradient,
         },
     );
 }
@@ -546,7 +551,27 @@ fn push_textured_rects<const N: usize>(
     rects: [(Rectangle, Rectangle); N],
 ) {
     for (dst, src) in rects {
-        batch.push_textured_path_uv(dst, src, texture.path, texture.tint, texture.blend);
+        push_textured_slice_quad(batch, texture, dst, src, texture.path);
+    }
+}
+
+fn push_textured_slice_quad(
+    batch: &mut QuadBatch,
+    texture: TexturedSlice<'_>,
+    bounds: Rectangle,
+    uvs: Rectangle,
+    path: &str,
+) {
+    if let Some(gradient) = texture.gradient {
+        batch.push_textured_path_uv_colors(
+            bounds,
+            uvs,
+            path,
+            gradient.colors(bounds, texture.tint),
+            texture.blend,
+        );
+    } else {
+        batch.push_textured_path_uv(bounds, uvs, path, texture.tint, texture.blend);
     }
 }
 
@@ -565,7 +590,7 @@ fn push_cropped_slice_quad(
     }
 
     let (path, full_uvs) = crop_flattened_subregion(texture.path, source_uvs);
-    batch.push_textured_path_uv(bounds, full_uvs, &path, texture.tint, texture.blend);
+    push_textured_slice_quad(batch, texture, bounds, full_uvs, &path);
 }
 
 fn push_cropped_slice_rects<const N: usize>(

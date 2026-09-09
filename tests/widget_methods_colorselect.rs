@@ -352,6 +352,24 @@ fn test_statusbar_texture_and_color_methods_still_resolve() {
 }
 
 #[test]
+fn test_statusbar_foreground_gradient_and_color_api() {
+    let env = WowLuaEnv::new().unwrap();
+    env.exec(
+        r#"
+        local sb = CreateFrame("StatusBar", "TestStatusBarGradient", UIParent)
+        sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+        sb:SetForegroundColor(0.2, 0.3, 0.4, 0.5)
+        sb:SetForegroundGradient("HORIZONTAL", 1, 0, 0, 1, 0, 0, 1, 0.75)
+    "#,
+    )
+    .unwrap();
+    let color: (f32, f32, f32, f32) = env
+        .eval("return TestStatusBarGradient:GetStatusBarColor()")
+        .unwrap();
+    assert_eq!(color, (0.2, 0.3, 0.4, 0.5));
+}
+
+#[test]
 fn test_statusbar_set_color_fill_aliases_statusbar_color_state() {
     let env = WowLuaEnv::new().unwrap();
 

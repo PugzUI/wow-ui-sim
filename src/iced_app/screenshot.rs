@@ -41,6 +41,20 @@ impl App {
         if let Err(error) = self.configure_screenshot_runtime(width, height, ui_scale) {
             return LuaResponse::Error(error);
         }
+        // Screenshot sizing fires the same display/scale events as a real
+        // window resize. The visualizer's Options fixture intentionally
+        // restores the real options state after those events so the manifest
+        // describes the stage that agents actually inspect, not a transient
+        // closed frame.
+        if manifest.is_some() {
+            let env = self.env.borrow();
+            if let Err(error) = env.exec(
+                "if WeakAuras and WeakAuras.ScalpelPreviewEnsureOptions then \
+                 WeakAuras.ScalpelPreviewEnsureOptions() end",
+            ) {
+                eprintln!("[visualizer] failed to restore Options after sizing: {error}");
+            }
+        }
         let output_path = Path::new(output).to_path_buf();
         let batch = self.build_screenshot_batch(width, height, filter);
         let mut tex_mgr = self.texture_manager.borrow_mut();
@@ -66,18 +80,29 @@ impl App {
         if let Err(e) = save_screenshot(&img, &output_path) {
             return LuaResponse::Error(format!("Failed to save screenshot: {}", e));
         }
+        // Sizing and rendering can dispatch the same UI events as a real
+        // resize. Reassert the real Options state after the render as well,
+        // before writing the authoritative manifest and returning control.
+        if manifest.is_some() {
+            let env = self.env.borrow();
+            if let Err(error) = env.exec(
+                "if WeakAuras and WeakAuras.ScalpelPreviewEnsureOptions then \
+                 WeakAuras.ScalpelPreviewEnsureOptions() end",
+            ) {
+                eprintln!("[visualizer] failed to restore Options after render: {error}");
+            }
+        }
         if let Some(manifest) = manifest {
             write_visualizer_manifest(
                 &self.env.borrow(),
                 manifest,
                 width,
                 height,
-                crate::render::texture::ui_scale(),
+                crate::render::texture::UI_SCALE,
                 filter,
                 requested_ids,
             );
         }
-
         LuaResponse::Output(format_screenshot_saved_message(
             &img,
             &output_path,
@@ -109,8 +134,10 @@ impl App {
         }
         let cached_strata = self.cached_strata_quads.borrow().clone();
         let cached_strata_ready = cached_strata.iter().any(Option::is_some);
+        let stream_filter =
+            crate::render::texture::visualizer_mode().then_some(SCALPEL_VISUALIZER_ROOT);
         let fallback_batch = (!cached_strata_ready)
-            .then(|| self.build_screenshot_batch(stage_width, stage_height, None));
+            .then(|| self.build_screenshot_batch(stage_width, stage_height, stream_filter));
         let render_started = std::time::Instant::now();
         let image = {
             let mut tex_mgr = self.texture_manager.borrow_mut();

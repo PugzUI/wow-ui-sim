@@ -55,8 +55,9 @@ struct VertexInput {
     @location(3) tex_index: i32,
     @location(4) flags: u32,
     @location(5) local_uv: vec2<f32>,
-    @location(6) mask_tex_index: i32,
-    @location(7) mask_tex_coords: vec2<f32>,
+    @location(6) source_uv: vec2<f32>,
+    @location(7) mask_tex_index: i32,
+    @location(8) mask_tex_coords: vec2<f32>,
 }
 
 // Vertex output / Fragment input
@@ -68,8 +69,9 @@ struct VertexOutput {
     @location(2) @interpolate(flat) tex_index: i32,
     @location(3) @interpolate(flat) flags: u32,
     @location(4) @interpolate(linear) local_uv: vec2<f32>,
-    @location(5) @interpolate(flat) mask_tex_index: i32,
-    @location(6) @interpolate(linear) mask_tex_coords: vec2<f32>,
+    @location(5) @interpolate(linear) source_uv: vec2<f32>,
+    @location(6) @interpolate(flat) mask_tex_index: i32,
+    @location(7) @interpolate(linear) mask_tex_coords: vec2<f32>,
 }
 
 @vertex
@@ -85,6 +87,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.tex_index = in.tex_index;
     out.flags = in.flags;
     out.local_uv = in.local_uv;
+    out.source_uv = in.source_uv;
     out.mask_tex_index = in.mask_tex_index;
     out.mask_tex_coords = in.mask_tex_coords;
 
@@ -155,6 +158,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Textured quad - sample from the appropriate tier atlas
         let tex_color = sample_tiered_texture(in.tex_index, in.tex_coords);
         color = tex_color * in.color;
+        const FLAG_CLAMP_TO_BLACK: u32 = 0x1000u;
+        if (in.flags & FLAG_CLAMP_TO_BLACK) != 0u {
+            let outside = any(in.source_uv < vec2<f32>(0.0)) || any(in.source_uv > vec2<f32>(1.0));
+            if outside {
+                color.a = 0.0;
+            }
+        }
     }
 
     let blend_mode = in.flags & 0xFFu;

@@ -93,14 +93,14 @@ const SPELL_BOOLEAN_METHODS: &[(&str, SpellScriptFn)] = &[
     ("IsSpellHelpful", is_spell_helpful),
     ("IsSpellHarmful", is_spell_harmful),
     ("IsSpellUsable", is_spell_usable),
-    #[cfg(feature = "client-ptr")]
+    #[cfg(feature = "retail-12-1-0")]
     (
         "TargetSpellChecksItemCondition",
         target_spell_checks_item_condition,
     ),
 ];
 
-#[cfg(feature = "client-ptr")]
+#[cfg(feature = "retail-12-1-0")]
 fn target_spell_checks_item_condition(state: &mut LuaState) -> LuaResult<u32> {
     // Spell-item condition metadata is not modeled; default to no match.
     state.push(Val::Bool(false));
@@ -125,6 +125,12 @@ fn register_legacy_spell_globals(state: &mut LuaState) -> LuaResult<()> {
         state.global,
         "GetSpellTexture",
         legacy_get_spell_texture,
+    )?;
+    table_set_rust_fn_static(
+        state,
+        state.global,
+        "GetSpellDescription",
+        get_spell_description,
     )?;
     Ok(())
 }
@@ -183,12 +189,12 @@ fn get_spell_texture(state: &mut LuaState) -> LuaResult<u32> {
     let texture = create_string(state, "Interface\\ICONS\\INV_Misc_QuestionMark");
     state.push(texture);
     state.push(Val::Num(icon_id as f64));
-    #[cfg(feature = "client-ptr")]
+    #[cfg(feature = "retail-12-1-0")]
     {
         state.push(Val::Nil);
         return Ok(3);
     }
-    #[cfg(not(feature = "client-ptr"))]
+    #[cfg(not(feature = "retail-12-1-0"))]
     Ok(2)
 }
 
@@ -631,4 +637,38 @@ fn get_spell_loss_of_control_cooldown_info(state: &mut LuaState) -> LuaResult<u3
     );
     state.push(table);
     Ok(1)
+}
+
+#[cfg(all(test, feature = "client-mists"))]
+mod tests {
+    use crate::lua_api::WowLuaEnv;
+
+    #[test]
+    fn mists_legacy_get_spell_description_matches_c_spell_and_captured_callback() {
+        let env = WowLuaEnv::new().expect("lua env should initialize");
+        let (global_description, namespace_description, callback_description): (
+            String,
+            String,
+            String,
+        ) = env
+            .eval(
+                r#"
+                local captured_get_spell_description = GetSpellDescription
+                local spell_id = 116
+                local global_description = captured_get_spell_description(spell_id)
+                local namespace_description = C_Spell.GetSpellDescription(spell_id)
+                local callback_description = ""
+                local spell = Spell:CreateFromSpellID(spell_id)
+                spell:ContinueOnSpellLoad(function(object)
+                    callback_description = captured_get_spell_description(object:GetSpellID())
+                end)
+                return global_description, namespace_description, callback_description
+                "#,
+            )
+            .expect("legacy description callback should be callable");
+
+        assert!(!namespace_description.is_empty());
+        assert_eq!(global_description, namespace_description);
+        assert_eq!(callback_description, namespace_description);
+    }
 }

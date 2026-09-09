@@ -60,6 +60,7 @@ pub(super) fn set_tex_coord(state: &mut LuaState) -> LuaResult<u32> {
 /// Rect form `(ULx, LRx, ULy, LRy)`. Atlas remapping is applied when the
 /// frame has an active atlas slot, otherwise the values pass through.
 fn apply_rect_tex_coords(frame: &mut crate::widget::Frame, rect: [f32; 4]) {
+    frame.local_tex_coords = Some((rect[0], rect[1], rect[2], rect[3]));
     frame.tex_coords = Some(remap_tex_coords(
         frame.atlas_tex_coords,
         rect[0],
@@ -78,6 +79,7 @@ fn apply_quad_tex_coords(frame: &mut crate::widget::Frame, quad: [f32; 8]) {
     let right = quad[0].max(quad[2]).max(quad[4]).max(quad[6]);
     let top = quad[1].min(quad[3]).min(quad[5]).min(quad[7]);
     let bottom = quad[1].max(quad[3]).max(quad[5]).max(quad[7]);
+    frame.local_tex_coords = Some((left, right, top, bottom));
     frame.tex_coords = Some(remap_tex_coords(
         frame.atlas_tex_coords,
         left,
@@ -151,6 +153,7 @@ pub(super) fn reset_tex_coord(state: &mut LuaState) -> LuaResult<u32> {
     let mut sim = borrow_state_mut(state)?;
     if let Some(frame) = sim.widgets.get_mut_visual(id) {
         frame.tex_coords = frame.atlas_tex_coords;
+        frame.local_tex_coords = None;
         frame.tex_coords_quad = None;
     }
     Ok(0)
@@ -377,5 +380,42 @@ pub(super) fn clear_vertex_offsets(state: &mut LuaState) -> LuaResult<u32> {
     if let Some(frame) = sim.widgets.get_mut_visual(id) {
         frame.vertex_offsets = None;
     }
+
     Ok(0)
+}
+#[cfg(test)]
+mod tests {
+    use super::{apply_quad_tex_coords, apply_rect_tex_coords, remap_tex_coords};
+    use crate::widget::Frame;
+
+    #[test]
+    fn set_tex_coord_preserves_pre_atlas_local_coordinates() {
+        let mut frame = Frame::default();
+        frame.atlas_tex_coords = Some((0.25, 0.75, 0.25, 0.75));
+        apply_rect_tex_coords(&mut frame, [-0.001489, 1.001489, 0.0, 1.0]);
+        assert_eq!(
+            frame.local_tex_coords,
+            Some((-0.001489, 1.001489, 0.0, 1.0))
+        );
+        assert_eq!(frame.tex_coords, Some((0.2492555, 0.7507445, 0.25, 0.75)));
+    }
+
+    #[test]
+    fn set_tex_coord_quad_preserves_local_bounds() {
+        let mut frame = Frame::default();
+        apply_quad_tex_coords(&mut frame, [-0.1, 0.0, -0.1, 1.0, 1.1, 0.0, 1.1, 1.0]);
+        assert_eq!(frame.local_tex_coords, Some((-0.1, 1.1, 0.0, 1.0)));
+        assert_eq!(
+            frame.tex_coords_quad,
+            Some([-0.1, 0.0, -0.1, 1.0, 1.1, 0.0, 1.1, 1.0])
+        );
+    }
+
+    #[test]
+    fn generic_texture_remap_stays_unchanged() {
+        assert_eq!(
+            remap_tex_coords(None, 0.1, 0.9, 0.2, 0.8),
+            (0.1, 0.9, 0.2, 0.8)
+        );
+    }
 }

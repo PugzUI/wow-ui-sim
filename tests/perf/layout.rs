@@ -264,6 +264,7 @@ fn dirty_strata_params<'a>(
         tooltip_data,
         quest_blobs: &state.quest_blobs,
         elapsed_secs,
+        root_name: None,
     }
 }
 

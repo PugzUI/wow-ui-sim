@@ -84,6 +84,80 @@ if CreateFramePool == nil then
   end
 end
 
+if CreateObjectPool == nil then
+  function CreateObjectPool(createFunc, resetFunc, capacity)
+    local pool = {
+      createFunc = createFunc,
+      resetFunc = resetFunc,
+      capacity = capacity or math.huge,
+      activeObjects = {},
+      inactiveObjects = {},
+      knownObjects = {},
+      activeObjectCount = 0,
+    }
+
+    function pool:Acquire()
+      if self.activeObjectCount >= self.capacity then
+        return nil, false
+      end
+      local object = table.remove(self.inactiveObjects)
+      local isNew = object == nil
+      if isNew then
+        object = self.createFunc(self)
+        self.knownObjects[object] = true
+        if self.resetFunc then
+          self.resetFunc(self, object, true)
+        end
+      end
+      self.activeObjects[object] = true
+      self.activeObjectCount = self.activeObjectCount + 1
+      return object, isNew
+    end
+
+    function pool:Release(object)
+      if object == nil or not self.activeObjects[object] then
+        return false
+      end
+      if self.resetFunc then
+        self.resetFunc(self, object, false)
+      end
+      self.activeObjects[object] = nil
+      self.activeObjectCount = self.activeObjectCount - 1
+      table.insert(self.inactiveObjects, object)
+      return true
+    end
+
+    function pool:ReleaseAll()
+      local objects = {}
+      for object in pairs(self.activeObjects) do
+        objects[#objects + 1] = object
+      end
+      for _, object in ipairs(objects) do
+        self:Release(object)
+      end
+    end
+
+    function pool:GetNumActive()
+      return self.activeObjectCount
+    end
+
+    function pool:IsActive(object)
+      return self.activeObjects[object] == true
+    end
+
+    function pool:DoesObjectBelongToPool(object)
+      return self.knownObjects[object] == true
+    end
+
+    function pool:EnumerateActive()
+      return pairs(self.activeObjects)
+    end
+
+    return pool
+  end
+end
+
+
 if PartyMemberFramePool == nil and type(CreateFramePool) == "function" then
   PartyMemberFramePool = CreateFramePool("Frame", UIParent)
 end

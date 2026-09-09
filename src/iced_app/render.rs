@@ -513,6 +513,8 @@ impl App {
                 tooltip_data: &tooltip_data,
                 quest_blobs: &state.quest_blobs,
                 elapsed_secs,
+                root_name: crate::render::texture::visualizer_mode()
+                    .then_some(super::frame_collect::SCALPEL_VISUALIZER_ROOT),
             },
         );
     }

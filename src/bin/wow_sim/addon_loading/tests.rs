@@ -36,6 +36,33 @@ fn write_addon_with_lua(root: &Path, name: &str, metadata: &str, lua: &str) -> P
 }
 
 #[test]
+fn admin_allowlist_is_weakauras_family_and_pugzui_only() {
+    assert_eq!(
+        ADMIN_TEST_ADDONS,
+        &[
+            "WeakAuras",
+            "WeakAurasOptions",
+            "WeakAurasTemplates",
+            "WeakAurasArchive",
+            "WeakAurasModelPaths",
+            "PugzUI",
+        ]
+    );
+}
+
+#[test]
+fn admin_discovery_registers_load_on_demand_companions() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let toc = write_addon_with_toc(temp.path(), "WeakAurasOptions", "## LoadOnDemand: 1\n");
+
+    assert!(scan_addons(temp.path(), &[], ScreenKind::Game).is_empty());
+    assert_eq!(
+        scan_addons_inner(temp.path(), &[], ScreenKind::Game, true),
+        vec![("WeakAurasOptions".to_string(), toc)]
+    );
+}
+
+#[test]
 fn lua_errors_reports_enabled_addon_with_missing_required_dependency() {
     let temp = tempfile::tempdir().expect("tempdir");
     let dependent_toc = write_addon_with_lua(

@@ -9,6 +9,7 @@ use crate::app_icon_render::{FREEDESKTOP_APP_ID, SIZE, render_icon};
 pub(super) fn settings() -> window::Settings {
     let mut settings = window::Settings {
         size: initial_window_size(),
+        maximized: true,
         icon: window::icon::from_rgba(render_icon(), SIZE, SIZE).ok(),
         ..window::Settings::default()
     };
@@ -41,6 +42,11 @@ mod tests {
     #[test]
     fn settings_include_runtime_icon() {
         assert!(settings().icon.is_some());
+    }
+
+    #[test]
+    fn settings_open_maximized_by_default() {
+        assert!(settings().maximized);
     }
 
     #[test]

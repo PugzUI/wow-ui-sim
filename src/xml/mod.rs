@@ -18,8 +18,8 @@ pub use template::{
     get_anim_group_template, get_font_string_template, get_template, get_template_chain,
     get_template_info, get_template_lifecycle_flags, get_texture_template_size,
     register_anim_group_template, register_font_string_template, register_intrinsic_templates,
-    register_template, register_template_with_local_source, register_texture_template,
-    resolve_texture_inheritance,
+    register_mists_compat_templates, register_template, register_template_with_local_source,
+    register_texture_template, resolve_texture_inheritance,
 };
 pub use types::{FrameChildElement, FrameXml, ScopedModifierXml, UiXml, XmlElement};
 pub use types_animation::{AnimationElement, AnimationGroupXml, AnimationXml};

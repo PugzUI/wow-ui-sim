@@ -1,4 +1,9 @@
-//! Shared validation for live simulator IPC commands.
+//! Shared validation and GUI wakeup for live simulator IPC commands.
+
+/// Wake the GUI after enqueueing a command, independently of simulation timers.
+/// Notify retains a permit when the subscription is between polls; coalescing
+/// wakeups is safe because each GUI update drains the command queue.
+pub(crate) static COMMAND_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 pub const MAX_FRAME_ADVANCE_SECONDS: f64 = 60.0;
 pub const MAX_FRAME_ADVANCE_STEPS: u32 = 3_600;

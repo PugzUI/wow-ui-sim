@@ -610,6 +610,8 @@ Blizzard_AchievementUI/Blizzard_AchievementUI_Mainline.toc
 Blizzard_AchievementUI/Blizzard_AchievementUI_Mists.toc
 Blizzard_AchievementUI/Cata/Blizzard_AchievementUI.lua
 Blizzard_AchievementUI/Cata/Blizzard_AchievementUI.xml
+Blizzard_AchievementUI/Classic/Blizzard_AchievementUI_Shared.lua
+Blizzard_AchievementUI/Classic/Localization.lua
 Blizzard_AchievementUI/Mainline/Blizzard_AchievementUI.lua
 Blizzard_AchievementUI/Mainline/Blizzard_AchievementUI.xml
 Blizzard_AchievementUI/Mainline/Localization.lua

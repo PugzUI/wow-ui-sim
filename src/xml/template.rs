@@ -1,6 +1,7 @@
 //! Template registry for virtual frames.
 
 use super::types::{FrameChildElement, FrameXml};
+use super::types_elements::{FontStringXml, LayerElement, LayerXml, LayersXml, TextureXml};
 use rilua::Val;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -315,6 +316,162 @@ pub fn register_intrinsic_templates() {
     super::profile_templates::register_all();
 }
 
+/// Register the small shared-template subset needed by addons when the
+/// Blizzard UI tree is intentionally skipped. This keeps the isolated Mists
+/// addon lane independent of any live WoW installation or CASC extraction.
+pub fn register_mists_compat_templates() {
+    register_template(
+        "BackdropTemplate",
+        "Frame",
+        FrameXml {
+            mixin: Some("BackdropTemplateMixin".to_string()),
+            is_virtual: Some(true),
+            ..Default::default()
+        },
+    );
+    register_template(
+        "InsetFrameTemplate",
+        "Frame",
+        FrameXml {
+            is_virtual: Some(true),
+            ..Default::default()
+        },
+    );
+    register_template(
+        "PortraitFrameTemplate",
+        "Frame",
+        mists_portrait_frame_template(),
+    );
+    register_template(
+        "ButtonFrameTemplate",
+        "Frame",
+        mists_button_frame_template(),
+    );
+    register_template(
+        "MaximizeMinimizeButtonFrameTemplate",
+        "Frame",
+        mists_maximize_minimize_template(),
+    );
+    register_template(
+        "SearchBoxTemplate",
+        "EditBox",
+        FrameXml {
+            is_virtual: Some(true),
+            ..Default::default()
+        },
+    );
+    register_template("UIPanelButtonTemplate", "Button", mists_button_template());
+    register_template("UIPanelCloseButton", "Button", mists_button_template());
+    register_template(
+        "UIPanelScrollFrameTemplate",
+        "ScrollFrame",
+        mists_scroll_frame_template(),
+    );
+}
+
+fn mists_texture(suffix: &str, parent_key: &str) -> LayerElement {
+    LayerElement::Texture(TextureXml {
+        name: Some(format!("$parent{suffix}")),
+        parent_key: Some(parent_key.to_string()),
+        ..Default::default()
+    })
+}
+
+fn mists_portrait_frame_layers() -> LayersXml {
+    LayersXml {
+        layers: vec![LayerXml {
+            level: Some("BACKGROUND".to_string()),
+            texture_sub_level: None,
+            elements: vec![
+                mists_texture("Bg", "Bg"),
+                mists_texture("TitleBg", "TitleBg"),
+                mists_texture("Portrait", "Portrait"),
+                LayerElement::FontString(FontStringXml {
+                    name: Some("$parentTitleText".to_string()),
+                    parent_key: Some("TitleText".to_string()),
+                    ..Default::default()
+                }),
+            ],
+        }],
+    }
+}
+
+fn mists_portrait_frame_template() -> FrameXml {
+    FrameXml {
+        is_virtual: Some(true),
+        children: vec![
+            FrameChildElement::Layers(mists_portrait_frame_layers()),
+            FrameChildElement::Button(FrameXml {
+                name: Some("$parentCloseButton".to_string()),
+                parent_key: Some("CloseButton".to_string()),
+                ..Default::default()
+            }),
+        ],
+        ..Default::default()
+    }
+}
+
+fn mists_button_frame_template() -> FrameXml {
+    FrameXml {
+        inherits: Some("PortraitFrameTemplate".to_string()),
+        is_virtual: Some(true),
+        children: vec![FrameChildElement::Frame(FrameXml {
+            name: Some("$parentInset".to_string()),
+            parent_key: Some("Inset".to_string()),
+            inherits: Some("InsetFrameTemplate".to_string()),
+            ..Default::default()
+        })],
+        ..Default::default()
+    }
+}
+
+fn mists_maximize_minimize_template() -> FrameXml {
+    FrameXml {
+        mixin: Some("MaximizeMinimizeButtonFrameMixin".to_string()),
+        is_virtual: Some(true),
+        children: vec![
+            FrameChildElement::Button(FrameXml {
+                name: Some("$parentMaximizeButton".to_string()),
+                parent_key: Some("MaximizeButton".to_string()),
+                hidden: Some(true),
+                set_all_points: Some(true),
+                ..Default::default()
+            }),
+            FrameChildElement::Button(FrameXml {
+                name: Some("$parentMinimizeButton".to_string()),
+                parent_key: Some("MinimizeButton".to_string()),
+                set_all_points: Some(true),
+                ..Default::default()
+            }),
+        ],
+        ..Default::default()
+    }
+}
+
+fn mists_button_template() -> FrameXml {
+    FrameXml {
+        is_virtual: Some(true),
+        children: vec![FrameChildElement::ButtonText(FontStringXml {
+            name: Some("$parentText".to_string()),
+            parent_key: Some("Text".to_string()),
+            ..Default::default()
+        })],
+        ..Default::default()
+    }
+}
+
+fn mists_scroll_frame_template() -> FrameXml {
+    FrameXml {
+        is_virtual: Some(true),
+        children: vec![FrameChildElement::Slider(FrameXml {
+            name: Some("$parentScrollBar".to_string()),
+            parent_key: Some("ScrollBar".to_string()),
+            ..Default::default()
+        })],
+        ..Default::default()
+    }
+}
+
 struct IntrinsicFrameTemplate {
     name: &'static str,
     widget_type: &'static str,
@@ -418,7 +575,6 @@ pub fn clear_templates() {
 // ---------------------------------------------------------------------------
 
 use super::types_animation::AnimationGroupXml;
-use super::types_elements::{FontStringXml, TextureXml};
 
 fn with_font_string_template_registry<R>(
     f: impl FnOnce(&HashMap<String, FontStringXml>) -> R,

@@ -5,9 +5,9 @@
 //! paths (e.g. `Fonts\\FRIZQT__.TTF`) to fontdb family names.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use cosmic_text::fontdb;
-
 /// WoW font path constants (as they appear in Lua/XML).
 const WOW_FONT_FRIZ: &str = "Fonts\\FRIZQT__.TTF";
 const WOW_FONT_ARIAL_NARROW: &str = "Fonts\\ARIALN.TTF";
@@ -390,6 +390,35 @@ impl WowFontSystem {
     }
 
     fn new_with_options(load_casc_fonts: bool) -> Self {
+        let skip_blizzard_ui = std::env::var("WOW_SIM_SKIP_BLIZZARD_UI")
+            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let explicit_addon_root = std::env::var_os("WOW_SIM_ADDONS_PATH").map(PathBuf::from);
+        let addon_roots =
+            Self::addon_roots_for_font_constructor(skip_blizzard_ui, explicit_addon_root);
+        Self::new_with_addon_roots(load_casc_fonts, addon_roots)
+    }
+
+    fn addon_roots_for_font_constructor(
+        skip_blizzard_ui: bool,
+        explicit_addon_root: Option<PathBuf>,
+    ) -> Vec<PathBuf> {
+        if skip_blizzard_ui {
+            return explicit_addon_root
+                .filter(|path| path.is_dir())
+                .into_iter()
+                .collect();
+        }
+        crate::paths::default_addons_paths()
+    }
+
+    /// Create a font system using explicitly configured addon roots.
+    ///
+    /// Addon fonts are resolved only below these roots through
+    /// `Interface/AddOns/<addon>/...` WoW paths. This keeps custom font loading
+    /// aligned with texture resolution without allowing arbitrary filesystem
+    /// paths.
+    pub fn new_with_addon_roots(load_casc_fonts: bool, addon_roots: Vec<PathBuf>) -> Self {
         crate::logging::eprintln_elapsed(&format!(
             "[Startup] WowFontSystem::new begin casc={load_casc_fonts}"
         ));
@@ -400,7 +429,8 @@ impl WowFontSystem {
         if load_casc_fonts {
             load_wow_fonts(&mut db, &mut font_map);
         }
-        if font_map.is_empty() {
+        load_addon_fonts(&addon_roots, &mut db, &mut font_map);
+        if !font_map.contains_key(&normalize_wow_path(DEFAULT_WOW_FONT)) {
             timed_font_phase("font system fallback loaded", || {
                 load_system_font_fallback(&mut db, &mut font_map)
             });
@@ -562,12 +592,159 @@ fn load_wow_font(
     let family_name = fontdb_family_name(&data).unwrap_or_else(|| font_file.filename.to_string());
     db.load_font_data(data);
     register_font_aliases(font_file.wow_paths, &family_name, font_map);
-
     tracing::debug!(
         "Registered font {} from CASC -> family '{}'",
         font_file.filename,
         family_name
     );
+}
+
+fn load_addon_fonts(
+    addon_roots: &[PathBuf],
+    db: &mut fontdb::Database,
+    font_map: &mut HashMap<String, FontEntry>,
+) {
+    for root in addon_roots {
+        let Ok(canonical_root) = root.canonicalize() else {
+            continue;
+        };
+        let Some(interface) = canonical_root.parent() else {
+            continue;
+        };
+        let is_addons_root = canonical_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("AddOns"));
+        let is_interface_parent = interface
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("Interface"));
+        if !is_addons_root || !is_interface_parent {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&canonical_root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let addon_dir = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() && !file_type.is_symlink() {
+                load_addon_font_tree(&canonical_root, &addon_dir, db, font_map);
+            }
+        }
+    }
+}
+
+fn load_addon_font_tree(
+    addon_root: &Path,
+    current: &Path,
+    db: &mut fontdb::Database,
+    font_map: &mut HashMap<String, FontEntry>,
+) {
+    let Ok(entries) = std::fs::read_dir(current) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        // Do not follow links while walking addon trees. Besides avoiding
+        // escapes, this makes the scan's root containment invariant explicit.
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            load_addon_font_tree(addon_root, &path, db, font_map);
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let supported = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf"));
+        if !supported {
+            continue;
+        }
+        let Ok(canonical_path) = path.canonicalize() else {
+            continue;
+        };
+        if !canonical_path.starts_with(addon_root) {
+            continue;
+        }
+        let Ok(data) = std::fs::read(&canonical_path) else {
+            continue;
+        };
+        let Some(family_name) = fontdb_family_name(&data) else {
+            tracing::warn!("Ignoring invalid addon font {}", path.display());
+            continue;
+        };
+        let Ok(relative) = canonical_path.strip_prefix(addon_root) else {
+            continue;
+        };
+        let wow_path = format!(
+            "Interface/AddOns/{}",
+            relative.to_string_lossy().replace('\\', "/")
+        );
+        db.load_font_data(data);
+        register_font_alias(&wow_path, &family_name, font_map);
+    }
+}
+
+fn resolve_addon_font_path(path: &str, addon_roots: &[PathBuf]) -> Option<PathBuf> {
+    let normalized = path.replace('\\', "/");
+    let mut components = normalized.split('/').map(str::to_string);
+    if !components
+        .next()
+        .is_some_and(|part| part.eq_ignore_ascii_case("Interface"))
+        || !components
+            .next()
+            .is_some_and(|part| part.eq_ignore_ascii_case("AddOns"))
+    {
+        return None;
+    }
+    let tail: Vec<_> = components.collect();
+    if tail.is_empty()
+        || tail
+            .iter()
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return None;
+    }
+    for root in addon_roots {
+        let Ok(canonical_root) = root.canonicalize() else {
+            continue;
+        };
+        let mut current = canonical_root.clone();
+        let mut valid = true;
+        for part in &tail {
+            let Some(next) = crate::paths::find_case_insensitive(&current, part) else {
+                valid = false;
+                break;
+            };
+            current = next;
+        }
+        let Ok(canonical_current) = current.canonicalize() else {
+            continue;
+        };
+        if valid
+            && canonical_current.starts_with(&canonical_root)
+            && canonical_current.is_file()
+            && canonical_current
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")
+                })
+        {
+            return Some(canonical_current);
+        }
+    }
+    None
 }
 
 fn load_wow_fonts(db: &mut fontdb::Database, font_map: &mut HashMap<String, FontEntry>) {
@@ -609,21 +786,6 @@ fn first_system_family_name(db: &fontdb::Database) -> Option<String> {
         .map(|family| family.0.clone())
 }
 
-fn register_font_aliases(
-    wow_paths: &[&str],
-    family_name: &str,
-    font_map: &mut HashMap<String, FontEntry>,
-) {
-    let entry = FontEntry {
-        family: family_name.to_string(),
-    };
-
-    for wow_path in wow_paths {
-        let key = normalize_wow_path(wow_path);
-        font_map.insert(key, entry.clone());
-    }
-}
-
 /// Normalize a WoW font path to uppercase with forward slashes for map lookup.
 fn normalize_wow_path(path: &str) -> String {
     path.replace('/', "\\").to_uppercase()
@@ -635,6 +797,28 @@ fn fontdb_family_name(data: &[u8]) -> Option<String> {
     let mut tmp_db = fontdb::Database::new();
     tmp_db.load_font_data(data.to_vec());
     tmp_db.faces().next().map(|face| face.families[0].0.clone())
+}
+fn register_font_alias(
+    wow_path: &str,
+    family_name: &str,
+    font_map: &mut HashMap<String, FontEntry>,
+) {
+    font_map.insert(
+        normalize_wow_path(wow_path),
+        FontEntry {
+            family: family_name.to_string(),
+        },
+    );
+}
+
+fn register_font_aliases(
+    wow_paths: &[&str],
+    family_name: &str,
+    font_map: &mut HashMap<String, FontEntry>,
+) {
+    for wow_path in wow_paths {
+        register_font_alias(wow_path, family_name, font_map);
+    }
 }
 
 #[cfg(test)]
@@ -682,26 +866,16 @@ mod tests {
         if !asset_resolver_available() {
             return;
         }
-
         for font_file in WOW_FONT_FILES {
             let data = try_casc_font_bytes(font_file)
                 .unwrap_or_else(|| panic!("{} CASC bytes", font_file.filename));
             let family = fontdb_family_name(&data)
                 .unwrap_or_else(|| panic!("{} family name", font_file.filename));
-
-            assert!(
-                !family.is_empty(),
-                "expected {} to load a real family name",
-                font_file.filename
-            );
+            assert!(!family.is_empty());
         }
-
         let friz_data = try_casc_font_bytes(&WOW_FONT_FILES[0]).expect("FRIZQT__.TTF CASC bytes");
         let friz_family = fontdb_family_name(&friz_data).expect("FRIZQT__.TTF family name");
-        assert!(
-            friz_family.to_ascii_lowercase().contains("friz"),
-            "expected Friz Quadrata family, got {friz_family}"
-        );
+        assert!(friz_family.to_ascii_lowercase().contains("friz"));
     }
 
     #[test]
@@ -895,5 +1069,131 @@ mod tests {
         let mut fs = WowFontSystem::new();
         let h = fs.measure_text_height("", Some(WOW_FONT_FRIZ), 14.0, Some(200.0));
         assert_eq!(h, 0.0);
+    }
+    #[test]
+    fn addon_font_paths_resolve_case_insensitively() {
+        let root = tempfile::tempdir().unwrap();
+        let font = root.path().join("PugzUI").join("Media").join("Fonts");
+        std::fs::create_dir_all(&font).unwrap();
+        let path = font.join("Custom.TTF");
+        std::fs::write(&path, b"fixture").unwrap();
+
+        let resolved = resolve_addon_font_path(
+            "interface\\addons\\pugzui\\media\\fonts\\custom.ttf",
+            &[root.path().to_path_buf()],
+        );
+        assert_eq!(resolved.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn addon_font_paths_reject_escape_and_unsupported_files() {
+        let root = tempfile::tempdir().unwrap();
+        let font = root.path().join("PugzUI");
+        std::fs::create_dir_all(&font).unwrap();
+        std::fs::write(font.join("invalid.txt"), b"fixture").unwrap();
+
+        assert!(
+            resolve_addon_font_path(
+                "Interface/AddOns/PugzUI/../invalid.txt",
+                &[root.path().to_path_buf()],
+            )
+            .is_none()
+        );
+        assert!(
+            resolve_addon_font_path(
+                "Interface/AddOns/PugzUI/invalid.txt",
+                &[root.path().to_path_buf()],
+            )
+            .is_none()
+        );
+        assert!(
+            resolve_addon_font_path("/tmp/arbitrary.ttf", &[root.path().to_path_buf()],).is_none()
+        );
+    }
+
+    #[test]
+    fn addon_font_loading_registers_case_insensitive_interface_path() {
+        let source_candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        ];
+        let Some(source) = source_candidates
+            .iter()
+            .map(Path::new)
+            .find(|path| path.is_file())
+        else {
+            return;
+        };
+        let root = tempfile::tempdir().unwrap();
+        let font_dir = root
+            .path()
+            .join("Interface")
+            .join("AddOns")
+            .join("PugzUI")
+            .join("Media");
+        std::fs::create_dir_all(&font_dir).unwrap();
+        let target = font_dir.join("Custom.TTF");
+        std::fs::copy(source, &target).unwrap();
+
+        let mut db = fontdb::Database::new();
+        let mut font_map = HashMap::new();
+        load_addon_fonts(
+            std::slice::from_ref(&root.path().join("Interface").join("AddOns")),
+            &mut db,
+            &mut font_map,
+        );
+        let key = normalize_wow_path("INTERFACE\\ADDONS\\pugzui\\media\\custom.ttf");
+        let entry = font_map.get(&key).expect("custom addon font should load");
+        assert!(!entry.family.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn addon_font_resolution_rejects_symlink_directory_and_file_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let addon_root = root.path().join("Interface").join("AddOns");
+        std::fs::create_dir_all(&addon_root).unwrap();
+        let outside_font = outside.path().join("Escape.TTF");
+        std::fs::write(&outside_font, b"not a font").unwrap();
+
+        symlink(outside.path(), addon_root.join("LinkedAddon")).unwrap();
+        symlink(&outside_font, addon_root.join("PugzUI-Escape.TTF")).unwrap();
+
+        assert!(
+            resolve_addon_font_path(
+                "Interface/AddOns/LinkedAddon/Escape.TTF",
+                std::slice::from_ref(&addon_root),
+            )
+            .is_none()
+        );
+        assert!(
+            resolve_addon_font_path(
+                "Interface/AddOns/PugzUI-Escape.TTF",
+                std::slice::from_ref(&addon_root),
+            )
+            .is_none()
+        );
+
+        let mut db = fontdb::Database::new();
+        let mut font_map = HashMap::new();
+        load_addon_fonts(std::slice::from_ref(&addon_root), &mut db, &mut font_map);
+        assert!(font_map.is_empty());
+    }
+
+    #[test]
+    fn black_only_font_constructor_excludes_default_addon_roots() {
+        let roots = WowFontSystem::addon_roots_for_font_constructor(true, None);
+        assert!(roots.is_empty());
+    }
+
+    #[test]
+    fn black_only_font_constructor_keeps_explicit_addon_root() {
+        let root = tempfile::tempdir().unwrap();
+        let configured = root.path().to_path_buf();
+        let roots = WowFontSystem::addon_roots_for_font_constructor(true, Some(configured.clone()));
+        assert_eq!(roots, vec![configured]);
     }
 }

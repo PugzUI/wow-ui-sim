@@ -18,11 +18,7 @@ fn resolve_line_endpoint(
     let target_id = anchor.target_id?;
     let r = registry.get(target_id)?.layout_rect?;
     let (ax, ay) = anchor_position(anchor.point, r.x, r.y, r.width, r.height);
-    let ui_scale = crate::render::texture::ui_scale();
-    Some((
-        (ax + anchor.x_offset) * ui_scale,
-        (ay - anchor.y_offset) * ui_scale,
-    ))
+    Some((ax + anchor.x_offset, ay - anchor.y_offset))
 }
 
 fn adjust_talent_arrow_line_caps(
@@ -96,7 +92,7 @@ fn resolve_line_quad_inputs(
     };
     let sp = resolve_line_endpoint(start_anchor, registry)?;
     let ep = resolve_line_endpoint(end_anchor, registry)?;
-    let thickness = f.line_thickness * crate::render::texture::ui_scale();
+    let thickness = f.line_thickness;
     let (sp, ep) = adjust_talent_arrow_line_caps(f, sp, ep, thickness);
     let positions = line_quad_positions(sp, ep, thickness)?;
     Some((positions, line_uvs(f), line_tint(f, alpha)))
@@ -174,6 +170,7 @@ fn emit_line_vertices(
             tex_index,
             flags,
             local_uv: uvs[i],
+            source_uv: uvs[i],
             mask_tex_index: -1,
             mask_tex_coords: [0.0, 0.0],
         });

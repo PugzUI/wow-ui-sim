@@ -89,7 +89,7 @@ fn manifest_physical_geometry_localizes_native_texture_pixels_at_visualizer_scal
         manifest_path.to_str().expect("UTF-8 manifest path"),
         width,
         height,
-        0.53,
+        wow_ui_sim::render::texture::UI_SCALE,
         None,
         &["Coordinate Aura".to_string()],
     );
@@ -119,6 +119,22 @@ fn manifest_physical_geometry_localizes_native_texture_pixels_at_visualizer_scal
     assert_axis_near(bounds.1, y.floor(), "top");
     assert_axis_near(bounds.2, right.ceil() - 1.0, "right");
     assert_axis_near(bounds.3, bottom.ceil() - 1.0, "bottom");
+
+    // A direct child of UIParent is transformed by UIParent's effective scale
+    // exactly once. The layout rect already contains that effective scale, so
+    // the renderer must not apply the stage scale to the child a second time.
+    assert_axis_near(bounds.0, (40.0_f64 * 0.53).floor(), "expected left");
+    assert_axis_near(bounds.1, (30.0_f64 * 0.53).floor(), "expected top");
+    assert_axis_near(
+        bounds.2,
+        ((40.0_f64 + 64.0) * 0.53).ceil() - 1.0,
+        "expected right",
+    );
+    assert_axis_near(
+        bounds.3,
+        ((30.0_f64 + 48.0) * 0.53).ceil() - 1.0,
+        "expected bottom",
+    );
 
     assert_eq!(texture["coordinate_space"], "physical_pixels");
     assert_eq!(texture["x"], physical["x"]);

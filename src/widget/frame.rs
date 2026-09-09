@@ -68,7 +68,7 @@ pub struct Frame {
     pub uses_parent_level: bool,
     /// Frame strata (major draw order).
     pub frame_strata: FrameStrata,
-    /// Whether frame strata was explicitly set (not inherited from parent).
+    /// Whether automatic parent-strata propagation is blocked for this frame.
     pub has_fixed_frame_strata: bool,
     /// Whether this frame locally flattens descendant render layers.
     pub flattens_render_layers: bool,
@@ -237,6 +237,10 @@ pub struct Frame {
     /// Stored when 8-arg SetTexCoord is called, used by tiling code to detect
     /// UV-based repeat tiling (BackdropTemplateMixin) where values >1.0 encode repeat counts.
     pub tex_coords_quad: Option<[f32; 8]>,
+    /// Texture coordinates in the source texture's pre-atlas local UV space.
+    pub local_tex_coords: Option<(f32, f32, f32, f32)>,
+    /// Whether CLAMPTOBLACKADDITIVE addressing makes out-of-range UVs transparent.
+    pub clamp_to_black: bool,
     /// Atlas base texture coordinates — the sub-region on the texture file.
     /// SetTexCoord remaps relative to these when an atlas is active.
     pub atlas_tex_coords: Option<(f32, f32, f32, f32)>,

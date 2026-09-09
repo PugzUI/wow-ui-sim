@@ -35,8 +35,6 @@ use saved_variables_parse::parse_saved_variables_file_with_cache;
 use saved_variables_serialize::serialize_assignment;
 use saved_variables_table_size_cache::{load_table_size_cache, save_table_size_cache};
 
-const DEFAULT_MAX_SAVED_VARIABLE_BYTES: u64 = 2 * 1024 * 1024;
-
 /// Read-only source for importing WTF saved variables from a real WoW installation.
 ///
 /// Writes always go to `SavedVariablesManager::storage_dir`, never back to this
@@ -627,7 +625,10 @@ fn max_load_bytes_from_env() -> Option<u64> {
     match std::env::var("WOW_SIM_MAX_SAVED_VARIABLE_BYTES") {
         Ok(value) if value == "0" => None,
         Ok(value) => value.parse().ok(),
-        Err(_) => Some(DEFAULT_MAX_SAVED_VARIABLE_BYTES),
+        // SavedVariables are user data, and legitimate addon databases (in
+        // particular WeakAuras) can exceed any small fixed default. Keep the
+        // limit available as an explicit opt-in for constrained environments.
+        Err(_) => None,
     }
 }
 
@@ -641,6 +642,13 @@ mod tests {
     use rilua::Val;
 
     use super::{SavedVariablesManager, WtfConfig, get_global};
+
+    #[test]
+    fn saved_variables_manager_has_no_default_load_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let manager = SavedVariablesManager::with_storage_dir(dir.path().to_path_buf());
+        assert!(manager.max_load_bytes.is_none());
+    }
 
     #[test]
     fn oversized_local_saved_variables_seed_nil_instead_of_loading() {

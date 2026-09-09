@@ -7,6 +7,7 @@
 mod helpers;
 
 pub mod alpha;
+pub mod backdrop;
 pub mod identity;
 pub mod input;
 pub mod region;
@@ -18,6 +19,7 @@ pub mod visibility;
 // Re-export all public functions so callers can use
 // `core_state::get_width` etc. as before.
 pub use alpha::*;
+pub use backdrop::*;
 pub use identity::*;
 pub use input::*;
 pub use region::*;
@@ -41,6 +43,8 @@ pub fn register_all(state: &mut LuaState, mt: GcRef<Table>) -> LuaResult<()> {
     register_input(state, mt)?;
     register_scale(state, mt)?;
     register_region(state, mt)?;
+    register_backdrop(state, mt)?;
+
     Ok(())
 }
 
@@ -144,5 +148,21 @@ fn register_region(state: &mut LuaState, mt: GcRef<Table>) -> LuaResult<()> {
     table_set_rust_fn_static(state, mt, "Intersects", intersects)?;
     table_set_rust_fn_static(state, mt, "IsDrawLayerEnabled", is_draw_layer_enabled)?;
     table_set_rust_fn_static(state, mt, "SetDrawLayerEnabled", set_draw_layer_enabled)?;
+    Ok(())
+}
+fn register_backdrop(state: &mut LuaState, mt: GcRef<Table>) -> LuaResult<()> {
+    table_set_rust_fn_static(state, mt, "SetBackdropNative", set_backdrop_native)?;
+    table_set_rust_fn_static(
+        state,
+        mt,
+        "SetBackdropColorNative",
+        set_backdrop_color_native,
+    )?;
+    table_set_rust_fn_static(
+        state,
+        mt,
+        "SetBackdropBorderColorNative",
+        set_backdrop_border_color_native,
+    )?;
     Ok(())
 }

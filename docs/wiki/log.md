@@ -2,6 +2,197 @@
 
 Chronological record of wiki operations.
 
+## [2026-08-29] investigation | Mists Visualizer coordinate scaling
+
+Updated the Mists ElvUI investigation and scaling design note after tracing the WeakAuras panel's half-size raster to a second `ui_scale()` application after layout had already applied `UIParent` effective scale. Native Visualizer rendering, hit testing, masks, lines, overlays, and manifest geometry now consume resolved `LayoutRect` values at renderer scale 1.0; the focused GPU raster regression and screenshot manifest tests pass.
+
+## [2026-07-16] update | FrameStrata before/after observations
+
+Updated FrameStrata documentation from `/tmp/FrameStrataProbe-parent-retail.lua` (retail 12.0.7 build 68453, captured `2026-07-16T01:21:08`). During XML `OnLoad`, the actual parent and direct `PARENT` child both reported `DIALOG`, while the literal sibling reported `LOW`. Under an actual `DIALOG` parent, base `HIGH` reported `HIGH`, derived literal `LOW` reported `LOW`, and derived `PARENT` reported `HIGH`. After the tested parent-strata and reparent operations, every tested non-fixed child and grandchild reported `LOW`, including explicit XML `MEDIUM` fixtures. Documentation avoids claims about the client's internal resolution or propagation mechanism; the capture did not test `BLIZZARD`.
+
+## [2026-07-14] investigation | 12.0.7 widget compatibility matrix
+
+Focused 12.0.7 proof verifies six retained Minimap texture setters, four Button methods, four ScrollFrame methods, and five font-bearing `SetFont` methods. `ModelSceneActorBase:GetModelUnitGUID` is absent under the intentional permanent no-3D scope and remains an explicit exception candidate; no approval requested yet.
+
+## [2026-07-14] investigation | 12.0.7 removal and event matrix
+
+Added exact 12.0.7 startup proof for all 17 proposed global removals and 17 added/changed events. Eleven removed names are nil, six remain compatibility functions, and every event registers. This corrects the earlier blanket claim that all removed wrappers remained available.
+
+## [2026-07-14] investigation | 12.1 final publication matrix
+
+Closed the final 106 FrameXML rows with an exact all-LoD publication matrix: seven proposed additions remain nil and 99 proposed removals remain functions. Every mismatch reports symbol, expected type, and observed type. Full target: 15 tests passed in 22.35 seconds (26.048 seconds wall time). Final 12.1 FrameXML inventory: 1 implemented, 431 best-effort, 0 exception-requested, and 0 untriaged rows.
+
+## [2026-07-14] investigation | 12.1 conservative source-absence batch
+
+Classified 175 proposed additions individually as stale snapshot entries. Selection requires the bare method/global token to be absent from every PTR Lua/XML/TOC file; the focused generated test then loads the complete game-compatible addon closure, including LoD roots, and reports any exact global/namespace publication. Stronger source patterns cover dot, colon, bracket, and `rawset` forms for earlier namespace families. Some all-LoD addons emit recorded Lua errors, so this remains explicitly best-effort source-plus-runtime evidence rather than an exact fidelity claim. Full target: 14 tests passed in 21.82 seconds (24.836 seconds wall time). Current inventory: 1 implemented, 325 best-effort, 0 exception-requested, and 106 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 utility namespace and colon-publication audit
+
+Corrected source scanning to cover both `Namespace.Method` and `Namespace:Method` Lua publications. Earlier stale families remain absent under the stronger falsifier. Classified 29 utility additions as stale and `PingUtil.GetContextualPingTypeForUnit` as vendor-present with tested `C_Ping` forwarding. Current full target: 13 tests passed in 15.20 seconds (18.309 seconds wall time). Current inventory: 1 implemented, 150 best-effort, 0 exception-requested, and 281 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 GuildControl snapshot mismatch
+
+Classified ten proposed `GuildControlUI_*` additions as stale snapshot globals. Shared-corpus PTR source proof finds no occurrences and startup runtime keeps all ten nil. The first post-build target took 64.43 seconds wall time; the unchanged warm complete target passed 11 tests in 15.65 seconds (17.272 seconds wall time), satisfying the 60-second gate. Current inventory: 1 implemented, 120 best-effort, 0 exception-requested, and 311 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 Narration snapshot mismatch
+
+Classified all 14 proposed `NarrationUtil` additions as stale qualified names. Shared-corpus PTR source proof and startup runtime enumeration keep the namespace nil. Full grouped audit target: 10 tests passed in 13.82 seconds (20.495 seconds wall time). Current inventory: 1 implemented, 110 best-effort, 0 exception-requested, and 321 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 SocialUI snapshot mismatch and source-scan budget
+
+Classified all 13 proposed `SocialUIUtil` additions as stale qualified names. Exact-qualified PTR source proof and runtime enumeration keep the namespace nil. Adding a third recursive source scan first pushed complete-target wall time to 76.304 seconds; a shared `OnceLock` source corpus reduced the verified nine-test target to 14.49 seconds test time and 19.023 seconds wall time. Current inventory: 1 implemented, 96 best-effort, 0 exception-requested, and 335 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 friends-list snapshot mismatch
+
+Classified all 29 proposed `FriendsListUtil` additions as stale qualified names. The falsifier first caught similarly named `FriendsFrame_*` globals; corrected exact-qualified PTR source proof shows no `FriendsListUtil.*` publications, and runtime proof confirms the namespace remains nil. Full grouped audit target: 8 tests passed in 10.32 seconds (12.541 seconds wall time). Current inventory: 1 implemented, 83 best-effort, 0 exception-requested, and 348 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 combat audio snapshot mismatch
+
+Classified ten proposed `CombatAudioAlertUtil` interrupt/start/end/death additions as stale snapshot entries. Recursive PTR source proof scans Lua/XML/TOC files; runtime proof verifies the active namespace and representative real method exist while all ten proposed names remain nil. Full grouped audit target: 7 tests passed in 13.94 seconds (22.816 seconds wall time). Current inventory: 1 implemented, 54 best-effort, 0 exception-requested, and 377 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 retained UI geometry globals
+
+Classified the proposed removals of `UIDoFramesIntersect`, `GetNotchHeight`, and `GetUIParentOffset` as vendor-present. Focused PTR proof covers overlap/separation/edge-touch behavior, physical-to-UI notch normalization, and maximum debug-bar/notch offset selection. Full grouped audit target: 6 tests passed in 13.438 seconds. Current inventory: 1 implemented, 44 best-effort, 0 exception-requested, and 387 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 input utility snapshot reversal
+
+Classified five proposed `InputUtil` additions as stale snapshot namespace moves and four proposed global removals as vendor-present. Focused PTR proof verifies the namespace members remain nil while the legacy globals perform cursor scaling, frame-scale forwarding, mouse-offset forwarding, and inspect-cursor selection. Full grouped audit target: 5 tests passed in 9.232 seconds. Current inventory: 1 implemented, 41 best-effort, 0 exception-requested, and 390 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 screen-scale snapshot reversal
+
+Classified the proposed `InterfaceUtil.GetScreenHeightScale` and `InterfaceUtil.GetScreenWidthScale` additions as stale snapshot entries and the proposed global removals as vendor-present. Focused PTR proof verifies `InterfaceUtil` is absent, both globals remain functions, and a 1024×768 fixture returns `1.0` for each. Full grouped audit target: 4 tests passed in 10.873 seconds. Current inventory: 1 implemented, 32 best-effort, 0 exception-requested, and 399 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 PTRFeedback quest-progress helper
+
+Classified `GetTimeSinceLastQuestProgress` as vendor-present best-effort behavior. Focused PTR proof verifies publication by PTRFeedback and pins the current upstream nil-arithmetic invocation defect caused by undefined `lastProgressTime`; simulator adds no guessed correction. Full grouped audit target: 3 tests passed in 6.625 seconds. Current inventory: 1 implemented, 28 best-effort, 0 exception-requested, and 403 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 shake namespace mismatch
+
+Classified proposed legacy `ShakeFrame` and `ShakeFrameRandom` additions as stale snapshot entries. Focused PTR proof verifies both globals remain nil while the distinct `ScriptAnimationUtil` methods exist and return cancellation functions for safe no-op conditions. Full grouped audit target: 2 tests passed in 5.774 seconds. Current inventory: 1 implemented, 27 best-effort, 0 exception-requested, and 404 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 PlayerChoice toggle LoD lifecycle
+
+Classified both `PlayerChoiceToggle_TryShow` snapshot occurrences as best-effort load-on-demand vendor behavior. Focused PTR proof verifies absence before `Blizzard_PlayerChoice`, publication after explicit load, eligible-button visibility, explicit plus OnShow state updates, and nil return. Current inventory: 1 implemented, 25 best-effort, 0 exception-requested, and 406 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 smooth-progress snapshot reversal
+
+Classified the proposed `InterpolatorUtil.GetSmoothProgressChange` addition as a reversed snapshot and the proposed global `GetSmoothProgressChange` removal as vendor-present. Focused PTR proof verifies the namespace member remains nil, the global remains a function, and representative input returns `70`. Current inventory: 1 implemented, 23 best-effort, 0 exception-requested, and 408 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 Macro save lifecycle
+
+Classified both `MacroFrame_SaveMacro` snapshot occurrences as best-effort vendor-present behavior. Focused PTR proof verifies the eager UIParent no-op placeholder is harmless and explicit `Blizzard_MacroUI` loading replaces it with the `MacroFrame:SaveMacro()` delegate. Current inventory: 1 implemented, 21 best-effort, 0 exception-requested, and 410 neutral untriaged rows.
+
+## [2026-07-14] system | Active-TOC patch source reachability
+
+Added `--active-tocs` to the full-tree Lua publication index. The active compiled profile uses `find_toc_file` to select each addon's TOC, applies per-file environment rules, recursively follows XML script/include paths through the loader's addon-root fallback and case-insensitive resolver, records unresolved Lua/XML reference paths, and excludes source files selected only by other flavor TOCs. This corrects false candidate matches such as Mists-only helpers found by the raw all-files scan. Source selection remains candidate evidence; dependency order and LoD timing still require lifecycle tests.
+
+## [2026-07-14] system | Full-tree patch source candidates
+
+Added deterministic `--index-lua-tree` scanning with relative paths, per-file hashes, and first-directory addon ownership. Pre-lexer candidate counts were discarded after review exposed comment/string/local-scope false positives; corrected counts must come from a fresh scan. Results remain candidate-only. The later active-TOC entry applies active-profile source reachability; dependency order and LoD timing remain unapplied.
+
+## [2026-07-14] system | Patch source candidates and initialization observations
+
+Added `--observe-initialization`, which writes actual active-profile Lua observations and rejects manifest/profile mismatches. Added `--index-lua-source` for file/line direct-publication candidates plus explicit mixin/metatable/dynamic-global/factory ambiguity records. Candidate source evidence never changes final statuses automatically. Full manifest-driven post-load/LoD/reset orchestration remains open.
+
+## [2026-07-14] system | Patch observation primitive
+
+Added a production observation primitive that resolves actual Lua global/table paths in `WowLuaEnv` and records active profile, presence, and Lua type while carrying caller-supplied phase/addon labels. Focused coverage observes present and absent symbols, a real identity-matched TOC load transition, and exact manifest-byte hashing. A concrete post-reset runtime operation and full manifest-driven phase orchestration remain open.
+
+## [2026-07-14] investigation | Preserve 12.0.7 API-change source
+
+Moved the 12.0.7 Warcraft Wiki source snapshot from temporary storage into `data/patch-api/sources/12.0.7-api-changes.txt` and linked the patch audit to the checked-in evidence. The 12.0.7 manifest/register remains open work.
+
+## [2026-07-14] system | Patch API audit manifest
+
+Created `systems/patch-api-audit-manifest.md` and the 432-row `data/patch-api/12.1-framexml.json` register. Reviewer correction removed false blanket exception requests: 412 pending rows now have null status and neutral `untriaged` resolution. Repository validation recomputes source/evidence hashes, verifies tests and commit ancestry, and rejects checklist/inventory drift. Completion requires an exact-manifest observation artifact and per-item unsafe/impossible approval provenance; real per-row observation generation remains open.
+
+## [2026-07-14] investigation | 12.1 CustomerOrders hide-wrapper mismatch
+
+Updated the 12.1 FrameXML inventory after a recursive PTR source scan found no `HideProfessionsCustomerOrdersFrame` definition. A focused PTR test loads ProfessionsTemplates and AuctionHouse dependencies, explicitly loads `Blizzard_ProfessionsCustomerOrders`, verifies its frame exists, and confirms the snapshot-only wrapper remains nil. Current inventory: 1 implemented, 19 best-effort, 0 exception-requested, and 412 neutral untriaged rows.
+
+## [2026-07-14] investigation | 12.1 Garrison hide-wrapper mismatches
+
+Updated the 12.1 FrameXML inventory after confirming `HideGarrisonMissionFrames` and `HideGarrisonShipyardFrame` have no definitions in local PTR Blizzard sources. A focused PTR test loads `Blizzard_GarrisonUI` with its LoD dependencies and verifies both snapshot-only wrappers remain nil. At that intermediate stage, 1 row was implemented, 18 were best-effort, and 413 unresolved rows were still mislabeled as exception requests; the latest manifest entry corrects them to neutral untriaged state.
+
+## [2026-07-14] investigation | 12.1 BlackMarket hide-name mismatch
+
+Updated the 12.1 FrameXML inventory after confirming PTR defines `BlackMarketFrame_Hide` with `HideUIPanel(BlackMarketFrame)` plus close-sound behavior, while snapshot entry `HideBlackMarketFrame` is absent. A focused PTR test explicitly loads `Blizzard_BlackMarketUI`, verifies the authoritative helper, and confirms the reversed-name wrapper remains nil. At that intermediate stage, 1 row was implemented, 16 were best-effort, and 415 unresolved rows were still mislabeled as exception requests; the latest manifest entry corrects them to neutral untriaged state.
+
+## [2026-07-14] investigation | 12.1 ItemUpgrade hide-name mismatch
+
+Updated the 12.1 FrameXML inventory after confirming PTR defines `ItemUpgradeFrame_Hide` as the authoritative `HideUIPanel(ItemUpgradeFrame)` helper, while snapshot entry `HideItemUpgradeFrame` is absent. A focused PTR test explicitly loads `Blizzard_ItemUpgradeUI` and verifies the reversed-name wrapper remains nil. At that intermediate stage, 1 row was implemented, 15 were best-effort, and 416 unresolved rows were still mislabeled as exception requests; the latest manifest entry corrects them to neutral untriaged state.
+
+## [2026-07-14] investigation | 12.1 GuildBank hide wrapper mismatch
+
+Updated the 12.1 FrameXML inventory after confirming `HideGuildBankFrame` has no definition in local PTR Blizzard sources. A focused PTR test explicitly loads `Blizzard_GuildBankUI` and verifies the snapshot-only wrapper remains absent. At that intermediate stage, 1 row was implemented, 14 were best-effort, and 417 unresolved rows were still mislabeled as exception requests; the latest manifest entry corrects them to neutral untriaged state.
+
+## [2026-07-14] investigation | 12.1 AuctionHouse hide wrapper mismatch
+
+Updated the 12.1 FrameXML inventory after confirming `HideAuctionHouseFrame` has no definition in the local PTR Blizzard sources. A focused PTR runtime test loads `Blizzard_AuctionHouseUI` and verifies the snapshot-only wrapper remains absent instead of adding guessed close semantics. At that intermediate stage, 1 row was implemented, 13 were best-effort, and 418 unresolved rows were still mislabeled as exception requests; the latest manifest entry corrects them to neutral untriaged state.
+
+## [2026-07-14] investigation | 12.1 Mists-only time helper excluded
+
+Updated the 12.1 FrameXML inventory after proving `GetTimeStringFromSeconds` is defined only by `Mists/UIParent.lua` and excluded from the PTR mainline TOC. It is classified best-effort as cross-flavor snapshot contamination rather than implemented behavior. PTR tests verify absence during environment initialization, after Blizzard loading/post-load compatibility, and after startup events. At that intermediate stage, 1 row was implemented, 12 were best-effort, and 419 unresolved rows were still mislabeled as exception requests; the latest manifest entry corrects them to neutral untriaged state.
+
+## [2026-07-14] update | 12.1 DifficultyUtil delegates modeled
+
+Updated the 12.1 audit and FrameXML inventory after adding five epoch-scoped, post-load `DifficultyUtil` color delegates. The delegates dynamically call the authoritative vendor globals, preserving arguments, both return values, later hotfix replacement, and explicit missing-global errors. Focused tests cover namespace reset/preservation and dynamic dispatch; full PTR Game UI startup verifies vendor threshold behavior, while older-retail startup verifies non-exposure. Inventory now records 1 implemented, 11 best-effort, and 420 pending strict exception re-triage.
+
+## [2026-07-14] decision | Patch API audit exception approval superseded
+
+A broad approval for documented 12.1, 12.0.7, and 12.0.5 exceptions was recorded, then superseded after review found that the full itemized checklist was not presented in chat and 12.1 FrameXML entries were mass-deferred without individual unsafe/impossible justification. Audits remain open pending re-triage and informed per-item approval.
+
+## [2026-07-13] create | Mastery spells modeled, alias identity fix
+
+Created `systems/specialization-mastery-spells.md` and
+`investigations/deprecated-specialization-alias-identity.md` after modeling
+`C_SpecializationInfo.GetSpecializationMasterySpells` from ChrSpecialization.db2
+(retiring the empty-table temporary shim) and fixing three pre-existing test
+failures: deprecated alias identity broken by post-cleanup re-registration, and
+legacy specialization globals / UIWidgetContainerMixin duplicated in
+`c_api/c_spec.rs` after their move to the Lua globals layer.
+
+## [2026-07-13] update | Retail-only CASC isolation test
+
+Updated `systems/casc-asset-cache.md` after adding
+`scripts/test-retail-casc-isolation.py`. Documented Bubblewrap masking of all
+non-retail WoW flavor directories, isolated writable caches, preserved failure
+logs, exact missing-entry reporting, and the verified workflow for adding or
+removing retail manifest entries.
+
+## [2026-07-13] update | Docker headless release build
+
+Updated `reference/addon-compatibility.md` and `systems/rendering-pipeline.md` after
+Docker CI for v0.1.29 failed because the headless release build omitted the
+required `client-retail` profile and `frame_collect` depended on the GUI-only
+`hit_grid` module. Recorded the fixed build contract
+(`--no-default-features --features client-retail`) and the shared `HitOrderKey`
+ownership split; the next tag will carry the fix.
+
+## [2026-07-13] update | Retail Blizzard UI manifest curation
+
+Updated `systems/client-profiles.md` and `systems/addon-loading.md` after
+`data/blizzard-ui-files/retail.txt` was independently curated to 3,591 entries,
+excluding 390 legacy-profile entries under `/Classic/`, `/Mists/`, `/Wrath/`,
+`/Cata/`, `/TBC/`, and legacy TOCs. Recorded that retail runtime uses the
+manifest contents directly, without an additional legacy-profile filter, while
+profile-aware TOC and game-type selection remains part of addon discovery.
+
+## [2026-07-09] investigation | Patch 12.0.5 API audit
+
+Created `investigations/patch-12-0-5-api-audit.md` to consolidate the probe-driven 12.0.5 work. Recorded that retail `12.0.5.67823` findings for forbidden frames, invalid unit-event filters, wildcard false attributes, Raise/Lower ordering, frame identity slot `[0]`, XML frame-level semantics, and display/scale event pairs are already modeled with focused tests. Documented that no `patch_12_0_5_inert_defaults` module exists and no obvious safe, already-backed 12.0.5 inert default remains unconverted. Updated with all 13 retained SavedVariables probe families, explicit best-effort boundaries, and exception requests for missing exact regressions, Store lifecycle evidence, XmlFrameLevel raw provenance, same-size window transitions, and the absent patch API-diff source.
+
+## [2026-07-06] investigation | Patch 12.0.7 API audit
+
+Created `investigations/patch-12-0-7-api-audit.md` after bridging compatible 12.0.7 API gaps and pausing exact-behavior work. Recorded additive/inert API bridges, verification logs, and blocked areas requiring live behavior: restricted unit-token returns, `ENCOUNTER_END` payloads, EncounterEvents color state, SimulateMouse taint/focus restrictions, debug secret propagation, secure raidtarget actions, M+ CalendarTime returns, aura security changes, widget secret aspects, and deprecated/removal timing. Updated after `C_BattleNet.InviteFriend` moved from inert bridge to modeled `SimState.bnet_friends` mutation. Updated again after ready-check behavior moved from inert `C_PartyInfo` bridge to modeled state: `DoReadyCheck`/`ReadyCheck`, `ConfirmReadyCheck`, `GetReadyCheckStatus`, `GetReadyCheckTimeLeft`, and immediate ready-check event dispatch. Updated after `C_UIFileAsset` moved from inert Lua defaults to best-effort limited-listfile lookup, after timeline event colors started mirroring the existing `C_EncounterEvents` color state, after `DurationTextBinding` gained documented non-secret state methods plus best-effort duration-object storage, after `GameTooltip_AddMoneyLine` started formatting money through `GetMoneyString` instead of appending raw copper, after `C_PartyInfo.IsGUIDInGroup` moved to the simulator party roster model, after C_PartyInfo leader/assistant mutators started updating simulator group-role state, after `C_PingSecure.ClearPendingPingOffScreenCallback` moved to the Rust shared callback table, after 12.0.7 CPU usage globals moved to the shared performance-metric defaults module, after `C_DurationUtil.CreateManualClock` moved to the Rust `C_DurationUtil` surface, after Delves/Housing/MerchantFrame/QuestHub trivial namespace defaults plus `C_PartyInfo.UninviteUnit` moved from the 12.0.7 Lua patch shim to Rust-backed best-effort/model-backed surfaces, after `C_EncounterTimeline.GetEventColor` moved to the Rust encounter-events surface while `GameTooltip_AddMoneyLine` moved to the shared formatting defaults, after secure pending button/ping/toggle callback globals moved to Rust-backed shared PingSecure callback storage, and after the recovered exact 12.0.7 CVar delta (17 adds, five removals, one default change) moved into profile-gated defaults with an explicit source-integrity exception for three unnamed claimed additions, and after `LuaDurationObject` gained best-effort clock storage plus deterministic `HasExpired`/`HasStarted`/`IsActive` methods for the documented 12.0.7 duration-object surface, and after the DurationText no-argument regression established that the stale `C_DurationUtil.CreateDurationTextFormattingOptions` / `CreateDurationTextRawValue` extraction names are universal-fallback nil functions rather than documented factories.
+
+## [2026-07-06] investigation | Patch 12.1 API audit
+
+Created `investigations/patch-12-1-api-audit.md` after bridging compatible 12.1 API gaps and pausing exact-behavior work. Recorded committed bridge points, verification logs, and the blocked areas that require live PTR behavior: UnitAura secrecy, Private Script Objects/Forbidden Partition, full ForbiddenAspect enforcement, AuraContainer/AuraButton/ManagedAuraContainer, DurationTextBinding/RadialProgress script objects, and exact structure payloads. Updated in the second pass to add an explicit implementation matrix and record 12.1 `DurationTextBinding` color-curve compatibility methods while leaving standalone `RadialProgress` paused. Updated again after Battle.net title-friend custom names/tags moved from inert Lua defaults to a best-effort `SimState.bnet_friends` model, after Encounter Journal difficulty helpers moved to generated-instance-data guesses, after `C_Discord.IsEnabled` started reflecting `discordClientEnabled`, after pending Battle.net friend invites gained a best-effort state model, after Battle.net feature probes started returning true for modeled friend-list/title-friend/tag support, after `C_Housing` owned-house/plot probes plus `ResetHouse` moved to local `SimState.housing` state pending replacement with probe-backed service semantics, and after safe `C_HousingBlueprint` share-code/import/export calls moved to local blueprint intent state pending exact PTR/service payload probes, and after housing editor/customize/decor/layout probes moved to local `SimState.housing` state with remaining blueprint availability calls itemized as pending exception requests until PTR/service payloads are known. Updated after `SetAppearOffline` moved to `SimState.bnet_appear_offline` and `BNCheckTitleFriendInviteToUnit` moved out of Lua inert defaults as a deterministic false best-effort probe pending title-friend service data. Updated again after Discord OAuth/link/settings/server/channel probes moved to local `SimState.discord` state and the final 12.1 Lua inert defaults were removed. Updated after housing blueprint availability probes moved from nil placeholders to local `SimState.housing` result codes pending exact service enum probes. Added explicit 12.1 exception requests for security-sensitive aura/private/forbidden/aspect behavior, standalone RadialProgress fidelity, full DurationTextBinding fidelity, exact service payloads, and strict-removal timing. Best-effort 12.1 bridges are explicitly temporary: keep them only while they are backed by existing simulator state and documented tests, then replace them with PTR/service probe-backed semantics once exact behavior is known. Updated after `LoadAddOnWithErrorHandling` was added as a tested canonical wrapper around `UIParentLoadAddOn`, and after the local 12.1 FrameXML snapshot was expanded into an exhaustive 320-added/112-removed inventory: the wrapper is implemented; the remaining 431 entries are explicit exception requests pending ownership/lifecycle evidence. Two names occur in both source lists, so the 432 entries represent 430 distinct names.
+
+## [2026-07-06] update | Retail API epoch features
+
+Updated `systems/client-profiles.md` after introducing cumulative retail API epoch features (`retail-12-0-7`, `retail-12-1-0`) alongside mutually-exclusive `client-*` profile features. Recorded that API surface gates belong on epoch features while PTR cache, CASC product, install paths, and vendor manifest behavior remain `client-ptr` profile concerns.
 ## [2026-08-10] update | Native Visualizer interactive streaming
 
 Added `design/scalpel-visualizer-streaming.md` after separating exact native
@@ -11,7 +202,6 @@ IPC schema, persistent WGPU pipeline/target/readback allocations, live strata
 and the 512 × 288 / 8 ms supported capacity profile. Exact 2560 × 1440 PNG
 and manifest evidence remains an independent non-substitutable path. Updated
 `index.md`.
-
 ## [2026-08-09] investigation | FontString ancestor movement cache
 
 Created `investigations/fontstring-ancestor-movement-cache.md` after a

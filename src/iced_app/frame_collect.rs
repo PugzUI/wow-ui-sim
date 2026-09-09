@@ -28,13 +28,16 @@ pub const SCALPEL_VISUALIZER_ROOT: &str = "__SCALPEL_VISUALIZER__";
 static HIT_TEST_EXCLUDED_NAMES: LazyLock<FxHashSet<&'static str>> =
     LazyLock::new(|| HIT_TEST_EXCLUDED.iter().copied().collect());
 
+/// Render-order key for hit testing: `(strata, frame_level, raise_order, id)`.
+pub type HitOrderKey = (FrameStrata, i32, i32, u64);
+
 /// Result of collecting frames for hit testing.
 ///
-/// Rects are in unscaled WoW coordinates (caller applies UI_SCALE).
+/// Rects are in renderer viewport units, matching the resolved `LayoutRect`.
 pub struct CollectedFrames {
     /// Frames eligible for hit testing with their render-order key, sorted
     /// by strata/level/raise-order/id (low to high).
-    pub hittable: Vec<(u64, super::hit_grid::HitOrderKey, crate::LayoutRect)>,
+    pub hittable: Vec<(u64, HitOrderKey, crate::LayoutRect)>,
 }
 
 /// Collect all frame IDs in the subtree rooted at the named frame.
@@ -61,25 +64,48 @@ pub fn collect_subtree_ids(
 
 fn collect_visualizer_ids(registry: &crate::widget::WidgetRegistry) -> FxHashSet<u64> {
     let mut ids = FxHashSet::default();
-    let mut queue = registry
+    let roots = registry
         .iter_ids()
         .filter(|&id| {
             registry.get(id).is_some_and(|frame| {
                 registry.is_ancestor_visible(id)
-                    && frame.name.as_deref().is_some_and(|name| {
-                        name.starts_with("WeakAuras:") || name.starts_with("ScalpelVisualizer_")
-                    })
+                    && frame
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| is_visualizer_root_frame_name(name))
             })
         })
         .collect::<Vec<_>>();
+    let root_ids: FxHashSet<u64> = roots.iter().copied().collect();
+    let mut queue = roots.clone();
+
+    // A named WeakAuras region can be nested below unnamed layout frames. Keep
+    // its ancestor chain so the normal renderability checks can resolve the
+    // frame geometry, but do not walk those ancestors' arbitrary children.
+    let mut ancestors = roots.clone();
+    while let Some(id) = ancestors.pop() {
+        let Some(parent_id) = registry.get(id).and_then(|frame| frame.parent_id) else {
+            continue;
+        };
+        if !queue.contains(&parent_id) {
+            queue.push(parent_id);
+            ancestors.push(parent_id);
+        }
+    }
 
     // Marker frames are positioned over the real WeakAuras region because
     // the addon API does not expose a stable name for every region frame.
     // Include frames whose computed layout intersects a marker, then walk
     // their descendants so icon textures, text, cooldowns, and masks render
     // through the normal native path.
-    let marker_rects = queue
+    let marker_rects = roots
         .iter()
+        .filter(|&&id| {
+            !matches!(
+                registry.get(id).and_then(|frame| frame.name.as_deref()),
+                Some("ElvUIParent" | "WeakAurasFrame" | "UIParent")
+            )
+        })
         .filter_map(|&id| frame_rect_for_visualizer(registry, id))
         .filter(|rect| rect.width > 0.0 && rect.height > 0.0)
         .collect::<Vec<_>>();
@@ -114,10 +140,25 @@ fn collect_visualizer_ids(registry: &crate::widget::WidgetRegistry) -> FxHashSet
             continue;
         }
         if let Some(frame) = registry.get(id) {
-            queue.extend(frame.children.iter().copied());
+            // ElvUIParent is a full-screen addon shell whose child tree also
+            // owns Blizzard's minimap/objective tracker. It is retained as a
+            // transparent addon root, but its arbitrary children must not
+            // turn an addons-only capture back into the default game HUD.
+            if root_ids.contains(&id) && frame.name.as_deref() != Some("ElvUIParent") {
+                queue.extend(frame.children.iter().copied());
+            }
         }
     }
     ids
+}
+
+fn is_visualizer_root_frame_name(name: &str) -> bool {
+    name.starts_with("WeakAuras:")
+        || name.starts_with("ScalpelVisualizer_")
+        || name == "WeakAurasFrame"
+        || name == "ElvUIParent"
+        || name.starts_with("ElvUF_")
+        || name.starts_with("PugzUI")
 }
 
 fn frame_rect_for_visualizer(
@@ -396,6 +437,34 @@ mod tests {
         assert!(ids.contains(&root));
         assert!(ids.contains(&child));
         assert!(!ids.contains(&unrelated));
+    }
+
+    #[test]
+    fn visualizer_root_does_not_walk_elvui_parent_hud_children() {
+        let mut registry = crate::widget::WidgetRegistry::new();
+        let elvui_parent = registry.register(Frame::new(
+            WidgetType::Frame,
+            Some("ElvUIParent".into()),
+            None,
+        ));
+        let player = registry.register(Frame::new(
+            WidgetType::Frame,
+            Some("ElvUF_Player".into()),
+            Some(elvui_parent),
+        ));
+        let minimap = registry.register(Frame::new(
+            WidgetType::Frame,
+            Some("Minimap".into()),
+            Some(elvui_parent),
+        ));
+        registry.add_child(elvui_parent, player);
+        registry.add_child(elvui_parent, minimap);
+
+        let ids = collect_subtree_ids(&registry, SCALPEL_VISUALIZER_ROOT);
+
+        assert!(ids.contains(&elvui_parent));
+        assert!(ids.contains(&player));
+        assert!(!ids.contains(&minimap));
     }
 
     #[test]

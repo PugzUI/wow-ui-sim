@@ -14,6 +14,7 @@ pub(super) fn set_color_texture(state: &mut LuaState) -> LuaResult<u32> {
     let mut sim = borrow_state_mut(state)?;
     if let Some(frame) = sim.widgets.get_mut_visual(id) {
         frame.color_texture = Some(color);
+        frame.gradient = None;
         clear_texture_sources(frame);
     }
     Ok(0)

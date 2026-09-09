@@ -120,6 +120,8 @@ macro_rules! frame_defaults {
             vert_tile: false,
             tex_coords: None,
             tex_coords_quad: None,
+            local_tex_coords: None,
+            clamp_to_black: false,
             atlas_tex_coords: None,
             atlas: None,
             nine_slice_layout: None,

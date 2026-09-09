@@ -85,6 +85,10 @@ pub struct AnimState {
     pub flipbook_frames: u32,
     pub flipbook_frame_width: f64,
     pub flipbook_frame_height: f64,
+    pub degrees: f64,
+    pub origin: String,
+    pub origin_x: f64,
+    pub origin_y: f64,
     pub scripts: HashMap<String, ()>,
 }
 
@@ -107,6 +111,10 @@ impl AnimState {
             flipbook_frames: 0,
             flipbook_frame_width: 0.0,
             flipbook_frame_height: 0.0,
+            degrees: 0.0,
+            origin: "CENTER".to_string(),
+            origin_x: 0.0,
+            origin_y: 0.0,
             scripts: HashMap::new(),
         }
     }

@@ -158,6 +158,24 @@ fn animation_get_smooth_progress_with_duration() {
 }
 
 #[test]
+fn animation_set_smooth_progress_updates_progress() {
+    let env = setup();
+    let progress: f64 = env
+        .eval(
+            r#"
+        local f = CreateFrame("Frame", "TestAnimSetSmProg", UIParent)
+        local ag = f:CreateAnimationGroup()
+        local anim = ag:CreateAnimation("Alpha")
+        anim:SetDuration(2.0)
+        anim:SetSmoothProgress(0.75)
+        return anim:GetSmoothProgress()
+    "#,
+        )
+        .unwrap();
+    assert!((progress - 0.75).abs() < 0.001);
+}
+
+#[test]
 fn animation_get_elapsed_default() {
     let env = setup();
     let elapsed: f64 = env

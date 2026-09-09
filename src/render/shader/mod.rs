@@ -20,6 +20,8 @@ pub use pipeline::WowUiPipeline;
 pub use primitive::{GpuBcTextureData, GpuTextureData, WowUiPrimitive, load_texture_or_crop};
 pub use program::WowUiProgram;
 pub use quad::FLAG_CIRCLE_CLIP;
+pub use quad::FLAG_CLAMP_TO_BLACK;
+pub use quad::FLAG_COOLDOWN_SWIPE;
 pub use quad::FLAG_DESATURATE;
 pub use quad::FLAG_MASK_ALPHA_COVERAGE;
 pub use quad::{BlendMode, FrameQuadSnapshot, QuadBatch, QuadVertex, TextureRequest};

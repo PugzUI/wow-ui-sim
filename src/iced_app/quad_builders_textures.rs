@@ -9,6 +9,7 @@ use super::super::slice_render::{
     emit_stretch_slice_atlas, emit_three_slice_h_atlas, emit_tile_slice_atlas,
 };
 use super::super::statusbar::StatusBarFill;
+use super::super::texture_gradient::frame_gradient;
 use super::super::tiling::{emit_tiled_texture, has_uv_repeat};
 
 /// Build quads for a Texture widget, optionally clipped by a StatusBar fill.
@@ -109,17 +110,10 @@ fn push_gradient_quad(
 ) {
     let min = tinted_gradient_color(base, grad.min_color, tint);
     let max = tinted_gradient_color(base, grad.max_color, tint);
-    let (top_color, bottom_color) = if grad.vertical {
-        (max, min)
-    } else {
-        (min, min)
-    };
     let colors = if grad.vertical {
-        [top_color, top_color, bottom_color, bottom_color]
+        [max, max, min, min]
     } else {
-        let right = max;
-        let left = min;
-        [left, right, right, left]
+        [min, max, max, min]
     };
     batch.push_gradient(bounds, colors);
 }
@@ -150,15 +144,65 @@ fn emit_textured_quad(
     if bar_fill.is_none()
         && let Some(uv4) = rotated_quad_uvs(f)
     {
+        let sampled_uv4 = if has_out_of_range_uv4(f) {
+            uv4.map(|[u, v]| [u.clamp(0.0, 1.0), v.clamp(0.0, 1.0)])
+        } else {
+            uv4
+        };
         let (effective_path, effective_uv4) =
-            remap_atlas_crop_uv4(tex_path, uv4, f.atlas_tex_coords);
+            remap_atlas_crop_uv4(tex_path, sampled_uv4, f.atlas_tex_coords);
+        // Sample clamped coordinates, but retain the native logical UVs for
+        // ClampToBlack so only the tiny overscan outside the source becomes
+        // transparent instead of filling the seam with edge texels.
+        let source_uv4 = uv4;
         let vert_before = batch.vertices.len();
-        batch.push_textured_path_uv4(bounds, effective_uv4, &effective_path, tint, f.blend_mode);
+        if let Some(gradient) = frame_gradient(f, bounds) {
+            if f.clamp_to_black {
+                batch.push_textured_path_uv4_clamp_to_black(
+                    bounds,
+                    effective_uv4,
+                    source_uv4,
+                    &effective_path,
+                    gradient.colors(bounds, tint),
+                    f.blend_mode,
+                );
+            } else {
+                batch.push_textured_path_uv4_colors(
+                    bounds,
+                    effective_uv4,
+                    &effective_path,
+                    gradient.colors(bounds, tint),
+                    f.blend_mode,
+                );
+            }
+        } else if f.clamp_to_black {
+            batch.push_textured_path_uv4_clamp_to_black(
+                bounds,
+                effective_uv4,
+                source_uv4,
+                &effective_path,
+                [tint; 4],
+                f.blend_mode,
+            );
+        } else {
+            batch.push_textured_path_uv4(
+                bounds,
+                effective_uv4,
+                &effective_path,
+                tint,
+                f.blend_mode,
+            );
+        }
         finalize_textured_quad(batch, vert_before, f);
         return;
     }
 
-    let (fill_bounds, fill_uvs) = apply_bar_fill_with_uvs(bounds, f.tex_coords, bar_fill);
+    let fallback_tex_coords = if requires_axis_fallback(f) {
+        Some((0.0, 1.0, 0.0, 1.0))
+    } else {
+        f.tex_coords
+    };
+    let (fill_bounds, fill_uvs) = apply_bar_fill_with_uvs(bounds, fallback_tex_coords, bar_fill);
     let (effective_path, effective_uvs) = remap_atlas_crop(tex_path, fill_uvs, f.atlas_tex_coords);
     let vert_before = batch.vertices.len();
     emit_texture_fill(
@@ -174,11 +218,29 @@ fn emit_textured_quad(
 }
 
 /// Returns the 4 corner UVs (TL, TR, BR, BL) when the frame has an 8-arg
-/// SetTexCoord that can't be represented as an axis-aligned rect. Excludes
-/// UV-repeat tiling (any value > 1.0) which is handled separately.
+/// SetTexCoord that can't be represented as an axis-aligned rect. Slight
+/// near-full overscan is retained for progress-layer corner mapping, while
+const UV4_NEAR_FULL_TOLERANCE: f32 = 0.0;
+
+fn has_out_of_range_uv4(f: &crate::widget::Frame) -> bool {
+    f.tex_coords_quad
+        .is_some_and(|raw| raw.iter().any(|&value| !(0.0..=1.0).contains(&value)))
+}
+
+fn requires_axis_fallback(f: &crate::widget::Frame) -> bool {
+    let Some(raw) = f.tex_coords_quad else {
+        return false;
+    };
+    has_out_of_range_uv4(f)
+        && (!f.clamp_to_black
+            || raw.iter().any(|&value| {
+                !(-UV4_NEAR_FULL_TOLERANCE..=1.0 + UV4_NEAR_FULL_TOLERANCE).contains(&value)
+            }))
+}
+
 fn rotated_quad_uvs(f: &crate::widget::Frame) -> Option<[[f32; 2]; 4]> {
     let raw = f.tex_coords_quad?;
-    if raw.iter().any(|&v| v > 1.0) {
+    if requires_axis_fallback(f) {
         return None;
     }
     let tl = [raw[0], raw[1]];
@@ -195,9 +257,20 @@ fn rotated_quad_uvs(f: &crate::widget::Frame) -> Option<[[f32; 2]; 4]> {
     Some([tl, tr, br, bl])
 }
 
+const ATLAS_FULL_BOUNDS_TOLERANCE: f32 = 0.001;
+
 /// Apply atlas-slot cropping to 4-corner UVs. Returns the rewritten path
 /// (with `@crop:` key when the texture is a sub-region) and corner UVs in
 /// [0,1] of the slot's local space.
+/// Bounds padded by less than the tolerance remain full texture; larger
+/// directional padding is isolated through the crop-normalized path.
+fn atlas_bounds_are_full((cl, cr, ct, cb): TextureUvs) -> bool {
+    (-ATLAS_FULL_BOUNDS_TOLERANCE..=0.0).contains(&cl)
+        && (1.0..=1.0 + ATLAS_FULL_BOUNDS_TOLERANCE).contains(&cr)
+        && (-ATLAS_FULL_BOUNDS_TOLERANCE..=0.0).contains(&ct)
+        && (1.0..=1.0 + ATLAS_FULL_BOUNDS_TOLERANCE).contains(&cb)
+}
+
 fn remap_atlas_crop_uv4(
     tex_path: &str,
     uv4: [[f32; 2]; 4],
@@ -206,11 +279,7 @@ fn remap_atlas_crop_uv4(
     let Some((cl, cr, ct, cb)) = atlas_tex_coords else {
         return (tex_path.to_string(), uv4);
     };
-    let is_full = (cl - 0.0).abs() < 0.001
-        && (cr - 1.0).abs() < 0.001
-        && (ct - 0.0).abs() < 0.001
-        && (cb - 1.0).abs() < 0.001;
-    if is_full {
+    if atlas_bounds_are_full((cl, cr, ct, cb)) {
         return (tex_path.to_string(), uv4);
     }
     let crop_key = format!("{tex_path}@crop:{cl:.6},{cr:.6},{ct:.6},{cb:.6}");
@@ -233,7 +302,16 @@ fn emit_texture_fill(
     alpha: f32,
 ) {
     let Some(uvs) = effective_uvs else {
-        batch.push_textured_path(fill_bounds, &effective_path, tint, f.blend_mode);
+        if let Some(gradient) = frame_gradient(f, fill_bounds) {
+            batch.push_textured_path_colors(
+                fill_bounds,
+                &effective_path,
+                gradient.colors(fill_bounds, tint),
+                f.blend_mode,
+            );
+        } else {
+            batch.push_textured_path(fill_bounds, &effective_path, tint, f.blend_mode);
+        }
         return;
     };
 
@@ -242,6 +320,7 @@ fn emit_texture_fill(
         uvs,
         tint,
         blend: f.blend_mode,
+        gradient: frame_gradient(f, fill_bounds),
     };
 
     if emit_specialized_textured_fill(batch, fill_bounds, f, texture) {
@@ -362,24 +441,134 @@ fn emit_basic_textured_fill(
     alpha: f32,
 ) {
     let uvs = uv_rect(texture.uvs);
-    if f.horiz_tile || f.vert_tile || has_uv_repeat(f) {
+    if !f.clamp_to_black && (f.horiz_tile || f.vert_tile || has_uv_repeat(f)) {
         emit_tiled_texture(batch, bounds, &uvs, texture.path, f, alpha);
         return;
     }
 
-    batch.push_textured_path_uv(bounds, uvs, texture.path, texture.tint, texture.blend);
+    let vert_before = batch.vertices.len();
+    if let Some(gradient) = texture.gradient {
+        batch.push_textured_path_uv_colors(
+            bounds,
+            uvs,
+            texture.path,
+            gradient.colors(bounds, texture.tint),
+            texture.blend,
+        );
+    } else if f.clamp_to_black {
+        let source_uvs = clamp_source_uv_rect(f, uvs);
+        batch.push_textured_path_uv_clamp_to_black(
+            bounds,
+            uvs,
+            source_uvs,
+            texture.path,
+            texture.tint,
+            texture.blend,
+        );
+    } else {
+        batch.push_textured_path_uv(bounds, uvs, texture.path, texture.tint, texture.blend);
+    }
+    if f.clamp_to_black && texture.gradient.is_some() {
+        let source_uvs = clamp_source_uv_rect(f, uvs);
+        let source_corners = [
+            [source_uvs.x, source_uvs.y],
+            [source_uvs.x + source_uvs.width, source_uvs.y],
+            [
+                source_uvs.x + source_uvs.width,
+                source_uvs.y + source_uvs.height,
+            ],
+            [source_uvs.x, source_uvs.y + source_uvs.height],
+        ];
+        for (index, vertex) in batch.vertices[vert_before..].iter_mut().enumerate() {
+            vertex.source_uv = source_corners[index % 4];
+        }
+    }
 }
 
 fn uv_rect((left, right, top, bottom): TextureUvs) -> Rectangle {
     Rectangle::new(Point::new(left, top), Size::new(right - left, bottom - top))
 }
+/// Tiny progress-texture overscan is a sampling guard, not visible content.
+/// Treating it as a shader clip boundary makes the two rasterized triangles
+/// disagree near their shared diagonal when their interpolated UVs re-enter
+/// the valid range. Keep the sample UVs unchanged, but avoid carrying that
+/// sub-pixel boundary into the fragment alpha test.
+const CLAMP_NEAR_FULL_TOLERANCE: f32 = 0.002;
 
+fn near_full_clamp_source_uv(f: &crate::widget::Frame) -> bool {
+    let Some((left, right, top, bottom)) = f.local_tex_coords else {
+        return false;
+    };
+    left >= -CLAMP_NEAR_FULL_TOLERANCE
+        && right <= 1.0 + CLAMP_NEAR_FULL_TOLERANCE
+        && top >= -CLAMP_NEAR_FULL_TOLERANCE
+        && bottom <= 1.0 + CLAMP_NEAR_FULL_TOLERANCE
+}
+
+/// Preserve the logical UV boundary for ordinary clamp textures. A rejected
+/// out-of-range UV4 is rendered through the axis-aligned fallback, so its
+/// invalid source coordinates must not reintroduce diagonal shader clipping.
+fn clamp_source_uv_rect(f: &crate::widget::Frame, fallback: Rectangle) -> Rectangle {
+    if requires_axis_fallback(f) || near_full_clamp_source_uv(f) {
+        return Rectangle::new(Point::ORIGIN, Size::new(1.0, 1.0));
+    }
+    f.local_tex_coords.map(uv_rect).unwrap_or(fallback)
+}
 fn finalize_textured_quad(batch: &mut QuadBatch, vert_before: usize, f: &crate::widget::Frame) {
-    if f.rotation != 0.0 {
+    let rejected_uv4 = requires_axis_fallback(f);
+    if !rejected_uv4 && f.rotation != 0.0 {
         apply_uv_rotation(batch, vert_before, f.rotation);
+    }
+    if !rejected_uv4 {
+        apply_vertex_offsets(batch, vert_before, f.vertex_offsets);
+    }
+    if f.clamp_to_black {
+        // Axis-aligned clamp quads preserve the raw logical local coordinates
+        // for the boundary test. Rotated quads already carry their raw
+        // per-corner coordinates and retain unit local UVs for geometry.
+        if !rejected_uv4
+            && f.tex_coords_quad.is_none()
+            && f.rotation == 0.0
+            && let Some((left, right, top, bottom)) = f.local_tex_coords
+        {
+            let local_uvs = [[left, top], [right, top], [right, bottom], [left, bottom]];
+            for (vertex, local_uv) in batch.vertices[vert_before..].iter_mut().zip(local_uvs) {
+                vertex.local_uv = local_uv;
+            }
+        }
+        for vertex in &mut batch.vertices[vert_before..] {
+            vertex.flags |= crate::render::shader::FLAG_CLAMP_TO_BLACK;
+        }
     }
     if f.desaturated {
         apply_desaturate_flag(batch, vert_before);
+    }
+}
+
+/// Apply WoW's per-corner UI offsets to emitted textured quads.
+///
+/// Native SetVertexOffset indices are UL, LL, UR, LR (1..4), while a
+/// QuadBatch quad is emitted TL, TR, BR, BL. UI Y grows upward, so screen
+/// coordinates invert the offset's Y component.
+fn apply_vertex_offsets(
+    batch: &mut QuadBatch,
+    vert_before: usize,
+    offsets: Option<[(f32, f32); 4]>,
+) {
+    let Some(offsets) = offsets else {
+        return;
+    };
+    if offsets.iter().all(|&(x, y)| x == 0.0 && y == 0.0) {
+        return;
+    }
+    // Native storage [TL, BL, TR, BR] -> batch order [TL, TR, BR, BL].
+    const NATIVE_TO_BATCH: [usize; 4] = [0, 2, 3, 1];
+    for quad in batch.vertices[vert_before..].chunks_exact_mut(4) {
+        for (batch_vertex, native_index) in quad.iter_mut().zip(NATIVE_TO_BATCH) {
+            let (dx, dy) = offsets[native_index];
+            batch_vertex.position[0] += dx;
+            batch_vertex.position[1] -= dy;
+        }
     }
 }
 
@@ -406,11 +595,7 @@ pub(super) fn remap_atlas_crop(
     let Some((cl, cr, ct, cb)) = atlas_tex_coords else {
         return (tex_path.to_string(), fill_uvs);
     };
-    let is_full = (cl - 0.0).abs() < 0.001
-        && (cr - 1.0).abs() < 0.001
-        && (ct - 0.0).abs() < 0.001
-        && (cb - 1.0).abs() < 0.001;
-    if is_full {
+    if atlas_bounds_are_full((cl, cr, ct, cb)) {
         return (tex_path.to_string(), fill_uvs);
     }
 
@@ -519,19 +704,61 @@ pub(crate) fn build_minimap_quads(
         .unwrap_or(DEFAULT_MINIMAP_MASK_TEXTURE);
     crate::iced_app::masking::apply_mask_path(batch, vert_before, bounds, mask_texture);
 }
-
 #[cfg(test)]
 mod tests {
     use super::{
-        BlendMode, DEFAULT_MINIMAP_MASK_TEXTURE, TexturedSlice, build_minimap_quads,
-        build_texture_quads, emit_texture_fill, remap_atlas_crop, stretch_slice_render,
-        tile_slice_render,
+        BlendMode, DEFAULT_MINIMAP_MASK_TEXTURE, TexturedSlice, apply_vertex_offsets,
+        build_minimap_quads, build_texture_quads, emit_texture_fill, remap_atlas_crop,
+        remap_atlas_crop_uv4, stretch_slice_render, tile_slice_render,
     };
     use crate::atlas::get_render_atlas_info;
     use crate::iced_app::slice_render::{tile_slice_center_height, tile_slice_center_width};
     use crate::render::QuadBatch;
+    use crate::render::shader::FLAG_CLAMP_TO_BLACK;
     use crate::widget::{Color, Frame, Gradient, WidgetType};
     use iced::{Point, Rectangle, Size};
+
+    #[test]
+    fn vertex_offsets_follow_native_corners_and_invert_screen_y() {
+        let mut batch = QuadBatch::new();
+        batch.push_solid(
+            Rectangle::new(Point::new(10.0, 20.0), Size::new(30.0, 40.0)),
+            [1.0; 4],
+        );
+        let original = batch
+            .vertices
+            .iter()
+            .map(|v| v.position)
+            .collect::<Vec<_>>();
+        apply_vertex_offsets(
+            &mut batch,
+            0,
+            Some([(1.0, 2.0), (3.0, 4.0), (5.0, 6.0), (7.0, 8.0)]),
+        );
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.position)
+                .collect::<Vec<_>>(),
+            vec![[11.0, 18.0], [45.0, 14.0], [47.0, 52.0], [13.0, 56.0]],
+        );
+
+        let mut unchanged = QuadBatch::new();
+        unchanged.push_solid(
+            Rectangle::new(Point::new(10.0, 20.0), Size::new(30.0, 40.0)),
+            [1.0; 4],
+        );
+        apply_vertex_offsets(&mut unchanged, 0, None);
+        assert_eq!(
+            unchanged
+                .vertices
+                .iter()
+                .map(|v| v.position)
+                .collect::<Vec<_>>(),
+            original,
+        );
+    }
 
     fn texture_frame_with_atlas(name: &str) -> Frame {
         let mut frame = Frame::new(WidgetType::Texture, None, None);
@@ -552,7 +779,188 @@ mod tests {
             ),
             tint: [1.0, 1.0, 1.0, 1.0],
             blend: BlendMode::Alpha,
+            gradient: None,
         }
+    }
+    #[test]
+    fn clamp_axis_crop_preserves_logical_source_uvs_for_shader_boundary() {
+        let mut batch = QuadBatch::new();
+        let mut frame = Frame::new(WidgetType::Texture, None, None);
+        frame.texture = Some(r"Interface\Textures\spinner".to_string());
+        frame.clamp_to_black = true;
+        frame.atlas_tex_coords = Some((0.25, 0.75, 0.125, 0.875));
+        frame.local_tex_coords = Some((-0.001489, 1.001489, -0.001489, 1.001489));
+        frame.tex_coords = Some((0.25, 0.75, 0.125, 0.875));
+
+        build_texture_quads(
+            &mut batch,
+            Rectangle::new(Point::ORIGIN, Size::new(200.0, 200.0)),
+            &frame,
+            None,
+            1.0,
+        );
+
+        assert_eq!(batch.vertices.len(), 4);
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.position)
+                .collect::<Vec<_>>(),
+            vec![[0.0, 0.0], [200.0, 0.0], [200.0, 200.0], [0.0, 200.0],]
+        );
+        assert!(
+            batch
+                .vertices
+                .iter()
+                .all(|v| v.flags & FLAG_CLAMP_TO_BLACK != 0)
+        );
+        let expected_local_uvs = [
+            [-0.001489, -0.001489],
+            [1.001489, -0.001489],
+            [1.001489, 1.001489],
+            [-0.001489, 1.001489],
+        ];
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.local_uv)
+                .collect::<Vec<_>>(),
+            expected_local_uvs
+        );
+        let expected_samples = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.tex_coords)
+                .collect::<Vec<_>>(),
+            expected_samples
+        );
+        let expected_source_uvs = [
+            [-0.001489, -0.001489],
+            [1.001489, -0.001489],
+            [1.001489, 1.001489],
+            [-0.001489, 1.001489],
+        ];
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.source_uv)
+                .collect::<Vec<_>>(),
+            expected_source_uvs
+        );
+        assert!(
+            batch.texture_requests[0]
+                .path
+                .ends_with("@crop:0.250000,0.750000,0.125000,0.875000")
+        );
+
+        // Equivalent to the fragment shader's ClampToBlack boundary test.
+        let shader_accepts =
+            |uv: [f32; 2]| uv[0] >= 0.0 && uv[0] <= 1.0 && uv[1] >= 0.0 && uv[1] <= 1.0;
+        assert!(!shader_accepts(batch.vertices[0].local_uv));
+        assert!(shader_accepts([0.5, 0.5]));
+        assert!(!shader_accepts(batch.vertices[0].source_uv));
+        assert!(shader_accepts([0.5, 0.5]));
+    }
+
+    #[test]
+    fn out_of_range_rotated_uvs_with_clamp_keep_axis_aligned_fallback() {
+        let mut batch = QuadBatch::new();
+        let mut frame = Frame::new(WidgetType::Texture, None, None);
+        frame.texture = Some(r"Interface\Textures\spinner".to_string());
+        frame.clamp_to_black = true;
+        frame.atlas_tex_coords = Some((0.25, 0.75, 0.125, 0.875));
+        // SetTexCoord's native order is UL, LL, UR, LR; these coordinates
+        // are outside the local domain and must use the safe fallback.
+        let raw = [-0.2, 0.1, 0.1, 1.2, 1.2, -0.1, 0.8, 1.1];
+        frame.local_tex_coords = Some((-0.2, 1.2, -0.1, 1.2));
+        frame.tex_coords = Some((0.15, 0.85, 0.05, 1.025));
+        frame.tex_coords_quad = Some(raw);
+        frame.vertex_offsets = Some([(20.0, 30.0), (-20.0, 30.0), (-20.0, -30.0), (20.0, -30.0)]);
+
+        build_texture_quads(
+            &mut batch,
+            Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0)),
+            &frame,
+            None,
+            1.0,
+        );
+
+        assert_eq!(batch.vertices.len(), 4);
+        assert_eq!(batch.quad_count(), 1);
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.position)
+                .collect::<Vec<_>>(),
+            vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0],]
+        );
+        assert!(
+            batch
+                .vertices
+                .iter()
+                .all(|v| v.flags & FLAG_CLAMP_TO_BLACK != 0)
+        );
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.tex_coords)
+                .collect::<Vec<_>>(),
+            vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+        );
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.local_uv)
+                .collect::<Vec<_>>(),
+            vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+        );
+        assert_eq!(
+            batch
+                .vertices
+                .iter()
+                .map(|v| v.source_uv)
+                .collect::<Vec<_>>(),
+            vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+        );
+        assert_eq!(
+            batch.texture_requests[0].path,
+            r"Interface\Textures\spinner@crop:0.250000,0.750000,0.125000,0.875000"
+        );
+    }
+
+    #[test]
+    fn out_of_range_rotated_uvs_without_clamp_keep_axis_aligned_fallback() {
+        let mut batch = QuadBatch::new();
+        let mut frame = Frame::new(WidgetType::Texture, None, None);
+        frame.texture = Some(r"Interface\Textures\spinner".to_string());
+        frame.tex_coords_quad = Some([-0.2, 0.1, 0.1, 1.2, 1.2, -0.1, 0.8, 1.1]);
+
+        build_texture_quads(
+            &mut batch,
+            Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0)),
+            &frame,
+            None,
+            1.0,
+        );
+
+        assert_eq!(batch.vertices.len(), 4);
+        assert_eq!(batch.vertices[0].tex_coords, [0.0, 0.0]);
+        assert_eq!(batch.vertices[2].tex_coords, [1.0, 1.0]);
+        assert!(
+            batch
+                .vertices
+                .iter()
+                .all(|v| v.flags & FLAG_CLAMP_TO_BLACK == 0)
+        );
+        assert!(batch.vertices.iter().all(|v| v.local_uv[0].abs() <= 1.0));
     }
 
     #[test]
@@ -593,27 +1001,60 @@ mod tests {
     }
 
     #[test]
-    fn color_texture_gradient_tints_stops_with_base_color() {
+    fn textured_gradient_emits_per_vertex_colors() {
         let mut batch = QuadBatch::new();
         let mut frame = Frame::new(WidgetType::Texture, None, None);
-        frame.color_texture = Some(Color::new(0.306, 0.133, 0.031, 0.5));
+        frame.texture = Some(r"Interface\Textures\gradient".to_string());
         frame.gradient = Some(Gradient {
             vertical: true,
-            min_color: Color::new(1.0, 1.0, 1.0, 0.0),
-            max_color: Color::new(1.0, 1.0, 1.0, 0.8),
+            min_color: Color::new(0.1, 0.2, 0.3, 0.4),
+            max_color: Color::new(0.8, 0.7, 0.6, 0.9),
         });
 
         build_texture_quads(
             &mut batch,
-            Rectangle::new(Point::ORIGIN, Size::new(430.0, 200.0)),
+            Rectangle::new(Point::ORIGIN, Size::new(100.0, 40.0)),
             &frame,
             None,
             1.0,
         );
 
         assert_eq!(batch.vertices.len(), 4);
-        assert_eq!(batch.vertices[0].color, [0.306, 0.133, 0.031, 0.4]);
-        assert_eq!(batch.vertices[2].color, [0.306, 0.133, 0.031, 0.0]);
+        assert_eq!(batch.texture_requests.len(), 1);
+        assert_eq!(batch.vertices[0].color, [0.8, 0.7, 0.6, 0.9]);
+        assert_eq!(batch.vertices[1].color, [0.8, 0.7, 0.6, 0.9]);
+        assert_eq!(batch.vertices[2].color, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(batch.vertices[3].color, [0.1, 0.2, 0.3, 0.4]);
+    }
+
+    #[test]
+    fn tiled_textured_gradient_stays_continuous_across_tiles() {
+        let mut batch = QuadBatch::new();
+        let mut frame = Frame::new(WidgetType::Texture, None, None);
+        frame.texture = Some(r"Interface\Textures\tiled-gradient".to_string());
+        frame.tex_coords = Some((0.0, 1.0, 0.0, 1.0));
+        frame.horiz_tile = true;
+        frame.width = 25.0;
+        frame.height = 20.0;
+        frame.gradient = Some(Gradient {
+            vertical: false,
+            min_color: Color::rgb(0.1, 0.1, 0.1),
+            max_color: Color::rgb(0.9, 0.9, 0.9),
+        });
+
+        build_texture_quads(
+            &mut batch,
+            Rectangle::new(Point::ORIGIN, Size::new(50.0, 20.0)),
+            &frame,
+            None,
+            1.0,
+        );
+
+        assert_eq!(batch.vertices.len(), 8);
+        assert_eq!(batch.texture_requests.len(), 2);
+        assert!((batch.vertices[1].color[0] - 0.5).abs() < 0.0001);
+        assert!((batch.vertices[4].color[0] - 0.5).abs() < 0.0001);
+        assert_eq!(batch.vertices[6].color, [0.9, 0.9, 0.9, 1.0]);
     }
 
     #[test]
@@ -632,9 +1073,85 @@ mod tests {
     }
 
     #[test]
+    fn remap_atlas_crop_isolates_aura9_near_full_bounds() {
+        let raw_uvs = Some((-1.224634, 2.224634, -1.224634, 2.224634));
+        let bounds = (-0.001489, 1.0, -0.001489, 1.0);
+        let (path, uvs) = remap_atlas_crop(r"Interface\Textures\Aura9", raw_uvs, Some(bounds));
+
+        assert_eq!(
+            path,
+            r"Interface\Textures\Aura9@crop:-0.001489,1.000000,-0.001489,1.000000"
+        );
+        let Some((left, right, top, bottom)) = uvs else {
+            panic!("near-full bounds must preserve remapped UVs");
+        };
+        let cw = bounds.1 - bounds.0;
+        let ch = bounds.3 - bounds.2;
+        assert!((left - (raw_uvs.unwrap().0 - bounds.0) / cw).abs() < 1e-6);
+        assert!((right - (raw_uvs.unwrap().1 - bounds.0) / cw).abs() < 1e-6);
+        assert!((top - (raw_uvs.unwrap().2 - bounds.2) / ch).abs() < 1e-6);
+        assert!((bottom - (raw_uvs.unwrap().3 - bounds.2) / ch).abs() < 1e-6);
+    }
+
+    #[test]
+    fn remap_atlas_crop_uv4_isolates_aura9_near_full_bounds() {
+        let raw_uvs = [
+            [-1.224634, -1.224634],
+            [2.224634, -1.224634],
+            [2.224634, 2.224634],
+            [-1.224634, 2.224634],
+        ];
+        let bounds = (-0.001489, 1.0, -0.001489, 1.0);
+        let (path, uvs) = remap_atlas_crop_uv4(r"Interface\Textures\Aura9", raw_uvs, Some(bounds));
+
+        assert!(path.ends_with("@crop:-0.001489,1.000000,-0.001489,1.000000"));
+        let cw = bounds.1 - bounds.0;
+        let ch = bounds.3 - bounds.2;
+        for (actual, [u, v]) in uvs.iter().zip(raw_uvs) {
+            assert!((actual[0] - (u - bounds.0) / cw).abs() < 1e-6);
+            assert!((actual[1] - (v - bounds.2) / ch).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn remap_atlas_crop_keeps_inset_and_outside_padding_cropped() {
+        let inset = remap_atlas_crop(
+            "atlas",
+            Some((0.0, 1.0, 0.0, 1.0)),
+            Some((0.001, 0.999, 0.001, 0.999)),
+        );
+        assert!(inset.0.contains("@crop:"));
+
+        let outside = remap_atlas_crop(
+            "atlas",
+            Some((0.0, 1.0, 0.0, 1.0)),
+            Some((-0.001501, 1.001501, -0.001501, 1.001501)),
+        );
+        assert!(outside.0.contains("@crop:"));
+    }
+
+    #[test]
+    fn remap_atlas_crop_uv4_keeps_inset_and_outside_padding_cropped() {
+        let raw_uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let inset = remap_atlas_crop_uv4("atlas", raw_uvs, Some((0.001, 0.999, 0.001, 0.999)));
+        assert!(inset.0.contains("@crop:"));
+
+        let outside = remap_atlas_crop_uv4(
+            "atlas",
+            raw_uvs,
+            Some((-0.001501, 1.001501, -0.001501, 1.001501)),
+        );
+        assert!(outside.0.contains("@crop:"));
+    }
+    #[test]
     fn stretch_atlas_slices_emit_nine_quads() {
         let mut batch = QuadBatch::new();
-        let frame = texture_frame_with_atlas("common-button-tertiary-normal");
+        let mut frame = texture_frame_with_atlas("common-button-tertiary-normal");
+        frame.gradient = Some(Gradient {
+            vertical: false,
+            min_color: Color::rgb(0.1, 0.1, 0.1),
+            max_color: Color::rgb(0.9, 0.9, 0.9),
+        });
 
         emit_texture_fill(
             &mut batch,
@@ -648,6 +1165,8 @@ mod tests {
 
         assert_eq!(batch.vertices.len(), 36);
         assert_eq!(batch.texture_requests.len(), 9);
+        assert_eq!(batch.vertices[0].color, [0.1, 0.1, 0.1, 1.0]);
+        assert_eq!(batch.vertices[33].color, [0.9, 0.9, 0.9, 1.0]);
     }
 
     #[test]

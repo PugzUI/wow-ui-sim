@@ -403,9 +403,8 @@ impl SimState {
         self.widgets.propagate_effective_alpha(id, parent_eff);
         if visible {
             // Show: insert newly-visible frames AFTER propagating alpha.
-            if !self.try_repair_strata_buckets_after_show(id)
-                && !self.try_append_tooltip_root_after_show(id)
-            {
+            let repaired = self.try_repair_strata_buckets_after_show(id);
+            if !repaired && !self.try_append_tooltip_root_after_show(id) {
                 self.invalidate_strata_buckets();
             }
         }

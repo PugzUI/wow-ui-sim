@@ -31,6 +31,19 @@ pub const TEST_ADDONS_PATH: &str = "./Interface/TestAddOns";
 
 /// Addon names that are test-only and should not be loaded in GUI mode.
 pub const TEST_ADDONS: &[&str] = &["Wowless", "WowlessData", "WowBehaviorTest", "WowDiscovery"];
+/// Addons intentionally exposed to the native WeakAuras admin probe lane.
+///
+/// The companion modules are LoadOnDemand dependencies of WeakAuras, not
+/// unrelated main addons; keeping them discoverable lets `/wa` load its
+/// options UI while excluding every other third-party and Blizzard addon.
+pub const ADMIN_TEST_ADDONS: &[&str] = &[
+    "WeakAuras",
+    "WeakAurasOptions",
+    "WeakAurasTemplates",
+    "WeakAurasArchive",
+    "WeakAurasModelPaths",
+    "PugzUI",
+];
 
 pub fn load_edit_mode_cache(
     env: &WowLuaEnv,
@@ -235,6 +248,7 @@ fn print_blizzard_summary(elapsed: std::time::Duration, t: &LoadTiming) {
 pub fn load_third_party_addons(
     skip_addons: bool,
     is_test: bool,
+    is_admin: bool,
     env: &WowLuaEnv,
     saved_vars: &mut Option<SavedVariablesManager>,
     screen: ScreenKind,
@@ -246,12 +260,26 @@ pub fn load_third_party_addons(
 
     let exclude = if is_test { &[][..] } else { TEST_ADDONS };
     let addon_paths = wow_ui_sim::paths::default_addons_paths();
-    let mut addons = scan_addon_paths(&addon_paths, exclude, screen);
-    if is_test {
+    let mut addons = if is_admin {
+        scan_addon_paths_with_load_on_demand(&addon_paths, exclude, screen)
+    } else {
+        scan_addon_paths(&addon_paths, exclude, screen)
+    };
+    if is_test && !is_admin {
         let test_addons_path = PathBuf::from(TEST_ADDONS_PATH);
         addons.extend(scan_addons(&test_addons_path, &[], screen));
     }
-    load_required_blizzard_dependencies_for_addons(env, saved_vars, screen, &addons);
+    if is_admin {
+        addons.retain(|(name, _)| ADMIN_TEST_ADDONS.contains(&name.as_str()));
+    }
+    // Focused admin/black-stage runs intentionally omit the Blizzard UI root.
+    // Do not reintroduce Blizzard code through addon TOC dependencies.
+    if !std::env::var("WOW_SIM_SKIP_BLIZZARD_UI")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        load_required_blizzard_dependencies_for_addons(env, saved_vars, screen, &addons);
+    }
     wow_ui_sim::loader::sort_addons_by_dependencies(&mut addons);
     if skip_addons {
         addons.retain(|(name, _)| TEST_ADDONS.iter().any(|t| t == name));
@@ -306,11 +334,30 @@ pub fn scan_addon_paths(
     exclude: &[&str],
     screen: ScreenKind,
 ) -> Vec<(String, PathBuf)> {
+    scan_addon_paths_inner(base_paths, exclude, screen, false)
+}
+
+fn scan_addon_paths_with_load_on_demand(
+    base_paths: &[PathBuf],
+    exclude: &[&str],
+    screen: ScreenKind,
+) -> Vec<(String, PathBuf)> {
+    scan_addon_paths_inner(base_paths, exclude, screen, true)
+}
+
+fn scan_addon_paths_inner(
+    base_paths: &[PathBuf],
+    exclude: &[&str],
+    screen: ScreenKind,
+    include_load_on_demand: bool,
+) -> Vec<(String, PathBuf)> {
     let mut addons = Vec::new();
     let mut seen = HashSet::new();
 
     for base_path in base_paths {
-        for (name, toc_path) in scan_addons(base_path, exclude, screen) {
+        for (name, toc_path) in
+            scan_addons_inner(base_path, exclude, screen, include_load_on_demand)
+        {
             if seen.insert(name.clone()) {
                 addons.push((name, toc_path));
             }
@@ -325,12 +372,21 @@ pub fn scan_addons(
     exclude: &[&str],
     screen: ScreenKind,
 ) -> Vec<(String, PathBuf)> {
+    scan_addons_inner(base_path, exclude, screen, false)
+}
+
+fn scan_addons_inner(
+    base_path: &Path,
+    exclude: &[&str],
+    screen: ScreenKind,
+    include_load_on_demand: bool,
+) -> Vec<(String, PathBuf)> {
     let mut addons = Vec::new();
     let Ok(entries) = std::fs::read_dir(base_path) else {
         return addons;
     };
     for entry in entries.flatten() {
-        if let Some(addon) = scanned_addon(entry.path(), exclude, screen) {
+        if let Some(addon) = scanned_addon(entry.path(), exclude, screen, include_load_on_demand) {
             addons.push(addon);
         }
     }
@@ -338,7 +394,12 @@ pub fn scan_addons(
     addons
 }
 
-fn scanned_addon(path: PathBuf, exclude: &[&str], screen: ScreenKind) -> Option<(String, PathBuf)> {
+fn scanned_addon(
+    path: PathBuf,
+    exclude: &[&str],
+    screen: ScreenKind,
+    include_load_on_demand: bool,
+) -> Option<(String, PathBuf)> {
     if !path.is_dir() {
         return None;
     }
@@ -346,7 +407,7 @@ fn scanned_addon(path: PathBuf, exclude: &[&str], screen: ScreenKind) -> Option<
     if should_skip_addon_dir(&name, exclude) {
         return None;
     }
-    let toc_path = loadable_toc_path(&path, screen)?;
+    let toc_path = loadable_toc_path(&path, screen, include_load_on_demand)?;
     Some((name, toc_path))
 }
 
@@ -354,14 +415,18 @@ fn should_skip_addon_dir(name: &str, exclude: &[&str]) -> bool {
     name.starts_with('.') || name == "BlizzardUI" || exclude.contains(&name)
 }
 
-fn loadable_toc_path(path: &Path, screen: ScreenKind) -> Option<PathBuf> {
+fn loadable_toc_path(
+    path: &Path,
+    screen: ScreenKind,
+    include_load_on_demand: bool,
+) -> Option<PathBuf> {
     let toc_path = wow_ui_sim::loader::find_toc_file(path)?;
     let toc = TocFile::from_file(&toc_path).ok()?;
     let supports_screen = toc.allows_screen(screen);
     let supported_game_type = !toc.is_ptr_only() && !toc.is_game_type_restricted();
     let supported_interface = load_out_of_date_addons()
         || toc.supports_interface_version(wow_ui_sim::toc::ACTIVE_INTERFACE_VERSION);
-    let startup_loadable = !toc.is_load_on_demand();
+    let startup_loadable = include_load_on_demand || !toc.is_load_on_demand();
     (supports_screen && supported_game_type && supported_interface && startup_loadable)
         .then_some(toc_path)
 }

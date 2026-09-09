@@ -12,6 +12,8 @@ const PTR_REQUIRED_PROFILE_CACHE_ENTRIES: &[&str] = &[
 ];
 
 pub(super) const MISTS_REQUIRED_PROFILE_CACHE_ENTRIES: &[&str] = &[
+    "Blizzard_AchievementUI/Classic/Blizzard_AchievementUI_Shared.lua",
+    "Blizzard_AchievementUI/Classic/Localization.lua",
     "Blizzard_ActionBar/Classic/ActionButtonTemplate.xml",
     "Blizzard_ActionBar/Classic/ActionButtonUtilOverrides.lua",
     "Blizzard_ActionBar/Classic/ExpBar.xml",
@@ -297,9 +299,8 @@ pub(super) fn required_profile_cache_entries() -> &'static [&'static str] {
 
 pub(super) fn sync_entry_belongs_to_active_profile(entry: &str) -> bool {
     match crate::client_profile::ACTIVE {
-        crate::client_profile::ClientProfile::Retail => retail_sync_entry(entry),
         crate::client_profile::ClientProfile::Ptr => ptr_sync_entry(entry),
-        _ => true,
+        _ => !ptr_only_entry(entry),
     }
 }
 
@@ -314,10 +315,6 @@ pub(super) fn cache_entry_is_usable(entry: &str, path: &Path) -> bool {
         crate::client_profile::ClientProfile::Mists => mists_cache_entry_is_usable(entry, path),
         _ => true,
     }
-}
-
-fn retail_sync_entry(entry: &str) -> bool {
-    !ptr_only_entry(entry)
 }
 
 fn ptr_sync_entry(entry: &str) -> bool {
@@ -532,8 +529,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "client-retail")]
-    fn retail_excludes_ptr_only_cooldown_broadcaster_bootstrap() {
+    #[cfg(not(feature = "client-ptr"))]
+    fn non_ptr_profiles_exclude_ptr_only_cooldown_broadcaster_bootstrap() {
         assert!(!super::sync_entry_belongs_to_active_profile(
             "Blizzard_CooldownBroadcaster/Blizzard_CooldownBroadcaster_Bootstrap.lua"
         ));

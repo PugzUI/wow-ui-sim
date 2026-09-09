@@ -175,6 +175,26 @@ fn ptr_sync_manifest_excludes_removed_world_map_entries() {
 
 #[test]
 #[cfg(feature = "client-mists")]
+fn mists_achievement_shared_sources_are_required_and_synced() {
+    let manifest: std::collections::HashSet<_> = manifest_entries().collect();
+    for entry in [
+        "Blizzard_AchievementUI/Classic/Blizzard_AchievementUI_Shared.lua",
+        "Blizzard_AchievementUI/Classic/Localization.lua",
+    ] {
+        assert!(
+            manifest.contains(entry),
+            "Achievement TOC source missing: {entry}"
+        );
+        assert!(super::required_profile_cache_entries().contains(&entry));
+        assert!(
+            manifest_entry_fdid(entry).is_some(),
+            "Achievement source needs a CASC ID: {entry}"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "client-mists")]
 fn mists_required_cache_entries_are_in_manifest() {
     let manifest: std::collections::HashSet<_> = manifest_entries().collect();
 

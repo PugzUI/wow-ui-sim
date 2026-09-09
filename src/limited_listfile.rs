@@ -25,6 +25,25 @@ pub fn lookup_entry(path: &str) -> Option<ListfileEntry> {
     BY_PATH.get(normalized.as_str()).copied()
 }
 
+pub fn lookup_texture_path(path: &str) -> Option<u32> {
+    let normalized = normalize_path(path);
+    let without_extension = normalized
+        .rsplit_once('.')
+        .map(|(path, _)| path)
+        .unwrap_or(&normalized);
+    let prefixed = without_extension.strip_prefix("interface/").map_or_else(
+        || format!("interface/{without_extension}"),
+        ToString::to_string,
+    );
+    [
+        normalized.clone(),
+        format!("{without_extension}.blp"),
+        format!("{prefixed}.blp"),
+    ]
+    .into_iter()
+    .find_map(|candidate| BY_PATH.get(&candidate).map(|entry| entry.fdid))
+}
+
 pub fn entries() -> impl Iterator<Item = ListfileEntry> {
     BY_PATH.values().copied()
 }

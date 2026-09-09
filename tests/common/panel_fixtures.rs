@@ -8,7 +8,7 @@
 //! as they ran from the single-file form.
 
 use std::path::PathBuf;
-use wow_ui_sim::loader::load_addon;
+use wow_ui_sim::loader::{find_toc_file, load_addon};
 use wow_ui_sim::lua_api::WowLuaEnv;
 
 pub fn blizzard_ui_dir() -> PathBuf {
@@ -17,72 +17,42 @@ pub fn blizzard_ui_dir() -> PathBuf {
 }
 
 /// Blizzard addons needed for the panel system (dependency order).
-pub const PANEL_ADDONS: &[(&str, &str)] = &[
-    ("Blizzard_SharedXMLBase", "Blizzard_SharedXMLBase.toc"),
-    ("Blizzard_Colors", "Blizzard_Colors_Mainline.toc"),
-    ("Blizzard_SharedXML", "Blizzard_SharedXML_Mainline.toc"),
-    (
-        "Blizzard_SharedXMLGame",
-        "Blizzard_SharedXMLGame_Mainline.toc",
-    ),
-    (
-        "Blizzard_UIPanelTemplates",
-        "Blizzard_UIPanelTemplates_Mainline.toc",
-    ),
-    (
-        "Blizzard_FrameXMLBase",
-        "Blizzard_FrameXMLBase_Mainline.toc",
-    ),
-    ("Blizzard_FrameEffects", "Blizzard_FrameEffects.toc"),
-    ("Blizzard_LoadLocale", "Blizzard_LoadLocale.toc"),
-    ("Blizzard_Fonts_Shared", "Blizzard_Fonts_Shared.toc"),
-    ("Blizzard_HelpPlate", "Blizzard_HelpPlate.toc"),
-    (
-        "Blizzard_AccessibilityTemplates",
-        "Blizzard_AccessibilityTemplates.toc",
-    ),
-    ("Blizzard_ObjectAPI", "Blizzard_ObjectAPI_Mainline.toc"),
-    ("Blizzard_UIParent", "Blizzard_UIParent_Mainline.toc"),
-    ("Blizzard_TextStatusBar", "Blizzard_TextStatusBar.toc"),
-    ("Blizzard_MoneyFrame", "Blizzard_MoneyFrame_Mainline.toc"),
-    ("Blizzard_POIButton", "Blizzard_POIButton.toc"),
-    ("Blizzard_Flyout", "Blizzard_Flyout.toc"),
-    ("Blizzard_StoreUI", "Blizzard_StoreUI_Mainline.toc"),
-    ("Blizzard_MicroMenu", "Blizzard_MicroMenu_Mainline.toc"),
-    ("Blizzard_EditMode", "Blizzard_EditMode.toc"),
-    ("Blizzard_GarrisonBase", "Blizzard_GarrisonBase.toc"),
-    ("Blizzard_GameTooltip", "Blizzard_GameTooltip_Mainline.toc"),
-    (
-        "Blizzard_UIParentPanelManager",
-        "Blizzard_UIParentPanelManager_Mainline.toc",
-    ),
-    (
-        "Blizzard_Settings_Shared",
-        "Blizzard_Settings_Shared_Mainline.toc",
-    ),
-    (
-        "Blizzard_SettingsDefinitions_Shared",
-        "Blizzard_SettingsDefinitions_Shared.toc",
-    ),
-    (
-        "Blizzard_SettingsDefinitions_Frame",
-        "Blizzard_SettingsDefinitions_Frame_Mainline.toc",
-    ),
-    ("Blizzard_FrameXML", "Blizzard_FrameXML_Mainline.toc"),
-    (
-        "Blizzard_FrameXMLUtil",
-        "Blizzard_FrameXMLUtil_Mainline.toc",
-    ),
-    ("Blizzard_Menu", "Blizzard_Menu.toc"),
-    ("Blizzard_StaticPopup", "Blizzard_StaticPopup.toc"),
-    ("Blizzard_TimeManager", "Blizzard_TimeManager_Mainline.toc"),
-    ("Blizzard_ItemButton", "Blizzard_ItemButton_Mainline.toc"),
-    ("Blizzard_QuickKeybind", "Blizzard_QuickKeybind.toc"),
-    (
-        "Blizzard_UIPanels_Game",
-        "Blizzard_UIPanels_Game_Mainline.toc",
-    ),
-    ("Blizzard_Minimap", "Blizzard_Minimap_Mainline.toc"),
+pub const PANEL_ADDONS: &[&str] = &[
+    "Blizzard_SharedXMLBase",
+    "Blizzard_Colors",
+    "Blizzard_SharedXML",
+    "Blizzard_SharedXMLGame",
+    "Blizzard_UIPanelTemplates",
+    "Blizzard_FrameXMLBase",
+    "Blizzard_FrameEffects",
+    "Blizzard_LoadLocale",
+    "Blizzard_Fonts_Shared",
+    "Blizzard_HelpPlate",
+    "Blizzard_AccessibilityTemplates",
+    "Blizzard_ObjectAPI",
+    "Blizzard_UIParent",
+    "Blizzard_TextStatusBar",
+    "Blizzard_MoneyFrame",
+    "Blizzard_POIButton",
+    "Blizzard_Flyout",
+    "Blizzard_StoreUI",
+    "Blizzard_MicroMenu",
+    "Blizzard_EditMode",
+    "Blizzard_GarrisonBase",
+    "Blizzard_GameTooltip",
+    "Blizzard_UIParentPanelManager",
+    "Blizzard_Settings_Shared",
+    "Blizzard_SettingsDefinitions_Shared",
+    "Blizzard_SettingsDefinitions_Frame",
+    "Blizzard_FrameXML",
+    "Blizzard_FrameXMLUtil",
+    "Blizzard_Menu",
+    "Blizzard_StaticPopup",
+    "Blizzard_TimeManager",
+    "Blizzard_ItemButton",
+    "Blizzard_QuickKeybind",
+    "Blizzard_UIPanels_Game",
+    "Blizzard_Minimap",
 ];
 
 pub fn setup_env() -> WowLuaEnv {
@@ -105,11 +75,10 @@ pub fn seed_addon_search_paths(env: &WowLuaEnv) {
 
 pub fn load_panel_addons(env: &WowLuaEnv) {
     let ui = blizzard_ui_dir();
-    for (name, toc) in PANEL_ADDONS {
-        let toc_path = ui.join(name).join(toc);
-        if !toc_path.exists() {
+    for name in PANEL_ADDONS {
+        let Some(toc_path) = find_toc_file(&ui.join(name)) else {
             continue;
-        }
+        };
         if let Err(e) = load_addon(&env.loader_env(), &toc_path) {
             eprintln!("[load {name}] FAILED: {e}");
         }

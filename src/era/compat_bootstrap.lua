@@ -12,10 +12,6 @@
 
 -- ─── Generic vanilla-era globals (no return state, no side effects) ────────
 
-if rawget(_G, "FillLocalizedClassList") == nil then
-  function FillLocalizedClassList(t) return t end
-end
-
 if rawget(_G, "AddLuaErrorHandler") == nil then
   function AddLuaErrorHandler(_handler) end
 end

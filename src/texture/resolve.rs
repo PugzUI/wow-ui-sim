@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
@@ -219,12 +219,31 @@ impl TextureManager {
 
     /// Resolve a WoW texture path to a file system path.
     pub fn resolve_path(&self, normalized_path: &str) -> Option<PathBuf> {
+        self.resolve_path_with_blizzard_fallback(normalized_path, blizzard_fallback_allowed())
+    }
+
+    fn resolve_path_with_blizzard_fallback(
+        &self,
+        normalized_path: &str,
+        allow_blizzard_fallback: bool,
+    ) -> Option<PathBuf> {
         if let Some(addon_relative) = strip_addons_prefix(normalized_path) {
             for addons_path in &self.addons_paths {
                 if let Some(result) = self.try_resolve_in_dir(addons_path, addon_relative) {
                     return Some(result);
                 }
             }
+        }
+
+        if !allow_blizzard_fallback {
+            // A focused addon scene can omit Blizzard UI modules while still
+            // resolving the individual Blizzard media files its addon asks
+            // for. CASC is data-only here; the extracted UI-art fallback stays
+            // disabled so it cannot reintroduce default UI resources.
+            if casc_media_fallback_allowed() {
+                return try_casc_resolve(normalized_path);
+            }
+            return None;
         }
 
         if cfg!(feature = "client-mists")
@@ -246,6 +265,26 @@ impl TextureManager {
 
         None
     }
+}
+
+fn blizzard_fallback_allowed() -> bool {
+    blizzard_fallback_allowed_for(std::env::var("WOW_SIM_SKIP_BLIZZARD_UI").ok().as_deref())
+}
+
+fn blizzard_fallback_allowed_for(value: Option<&str>) -> bool {
+    !value
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn casc_media_fallback_allowed() -> bool {
+    casc_media_fallback_allowed_for(std::env::var("WOW_SIM_ALLOW_CASC_MEDIA").ok().as_deref())
+}
+
+fn casc_media_fallback_allowed_for(value: Option<&str>) -> bool {
+    value
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 fn try_blizzard_interface_art_resolve(
@@ -277,19 +316,25 @@ fn is_legacy_paperdoll_slot_path(normalized_path: &str) -> bool {
 impl TextureManager {
     /// Try to resolve a path within a given base directory.
     fn try_resolve_in_dir(&self, base: &Path, path: &str) -> Option<PathBuf> {
+        if !is_safe_relative_path(path) {
+            return None;
+        }
+
         for ext in texture_extension_priority() {
             let file_path = base.join(format!("{}.{}", path, ext));
-            if file_path.is_file() {
+            if is_contained_candidate(base, &file_path) && file_path.is_file() {
                 return Some(file_path);
             }
         }
 
         let file_path = base.join(path);
-        if file_path.is_file() {
+        if is_contained_candidate(base, &file_path) && file_path.is_file() {
             return Some(file_path);
         }
 
-        if let Some(result) = self.resolve_case_insensitive_in(base, path) {
+        if let Some(result) = self.resolve_case_insensitive_in(base, path)
+            && is_contained_candidate(base, &result)
+        {
             return Some(result);
         }
 
@@ -307,6 +352,37 @@ impl TextureManager {
         }
         find_case_insensitive_file(&current, file_name)
     }
+}
+
+/// Addon-relative paths must remain ordinary relative paths, even on platforms
+/// where `Path::join` would otherwise interpret a component as a prefix/root.
+fn is_safe_relative_path(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    let parsed = Path::new(&path);
+    if parsed.is_absolute() {
+        return false;
+    }
+    parsed.components().all(|component| match component {
+        Component::Normal(value) => !value.to_string_lossy().contains(':'),
+        Component::CurDir | Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+            false
+        }
+    })
+}
+
+/// Check lexical containment before lookup, then canonical containment to
+/// prevent symlinked addon entries from escaping the configured root.
+fn is_contained_candidate(base: &Path, candidate: &Path) -> bool {
+    if candidate.strip_prefix(base).is_err() {
+        return false;
+    }
+    let (Ok(base), Ok(candidate)) = (
+        std::fs::canonicalize(base),
+        std::fs::canonicalize(candidate),
+    ) else {
+        return false;
+    };
+    candidate.strip_prefix(base).is_ok()
 }
 
 fn strip_addons_prefix(path: &str) -> Option<&str> {
@@ -468,11 +544,6 @@ fn nearest_edge_rgb(source: &[u8], width: u32, height: u32, x: u32, y: u32) -> O
         {
             return Some(rgb);
         }
-        if y + radius < height
-            && let Some(rgb) = edge_rgb_at(source, width, x, y + radius)
-        {
-            return Some(rgb);
-        }
     }
     None
 }
@@ -500,10 +571,84 @@ fn is_edge_color_source(pixel: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_sub_region, persistent_sub_region_cache_path};
-    use crate::texture::TextureData;
+    use super::{
+        blizzard_fallback_allowed_for, casc_media_fallback_allowed_for, extract_sub_region,
+        is_safe_relative_path, persistent_sub_region_cache_path,
+    };
+    use crate::texture::{TextureData, TextureManager};
+    use std::fs;
     use std::path::Path;
     use std::sync::Arc;
+
+    #[test]
+    fn addon_assets_resolve_in_black_only_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let asset = root.path().join("pUgZuI").join("Assets");
+        let weak_auras_asset = root.path().join("wEaKaUrAs").join("Media");
+        fs::create_dir_all(&asset).unwrap();
+        fs::create_dir_all(&weak_auras_asset).unwrap();
+        let asset_path = asset.join("Marker.PNG");
+        let weak_auras_asset_path = weak_auras_asset.join("Marker.PNG");
+        fs::write(&asset_path, b"test").unwrap();
+        fs::write(&weak_auras_asset_path, b"test").unwrap();
+
+        let manager = TextureManager::new().with_addons_path(root.path());
+        let resolved = manager
+            .resolve_path_with_blizzard_fallback("Interface/AddOns/PUGZUI/assets/marker", false)
+            .unwrap();
+        let weak_auras_resolved = manager
+            .resolve_path_with_blizzard_fallback("Interface/AddOns/WEAKAURAS/media/marker", false)
+            .unwrap();
+
+        assert_eq!(resolved, asset_path);
+        assert_eq!(weak_auras_resolved, weak_auras_asset_path);
+    }
+
+    #[test]
+    fn addon_relative_traversal_and_absolute_components_are_rejected() {
+        assert!(!is_safe_relative_path("../outside/marker"));
+        assert!(!is_safe_relative_path("/outside/marker"));
+        assert!(!is_safe_relative_path(r"C:\outside\marker"));
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("marker.png"), b"escape").unwrap();
+
+        let manager = TextureManager::new().with_addons_path(root.path());
+        assert_eq!(
+            manager
+                .resolve_path_with_blizzard_fallback("Interface/AddOns/../outside/marker", false,),
+            None
+        );
+    }
+
+    #[test]
+    fn generic_blizzard_assets_are_forbidden_in_black_only_policy() {
+        let manager = TextureManager::new();
+
+        assert_eq!(
+            manager.resolve_path_with_blizzard_fallback(
+                "Interface/FrameGeneral/UI-Frame",
+                blizzard_fallback_allowed_for(Some("1")),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn normal_mode_keeps_blizzard_fallback_enabled() {
+        assert!(blizzard_fallback_allowed_for(None));
+        assert!(blizzard_fallback_allowed_for(Some("0")));
+    }
+
+    #[test]
+    fn casc_media_requires_explicit_opt_in_for_a_black_stage() {
+        assert!(!casc_media_fallback_allowed_for(None));
+        assert!(!casc_media_fallback_allowed_for(Some("0")));
+        assert!(casc_media_fallback_allowed_for(Some("1")));
+        assert!(casc_media_fallback_allowed_for(Some("TRUE")));
+    }
 
     #[test]
     fn cropped_sub_region_bleeds_edge_rgb_into_low_alpha_black_padding() {

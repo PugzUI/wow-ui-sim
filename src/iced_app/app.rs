@@ -333,6 +333,13 @@ impl App {
         (app, Task::none())
     }
 
+    /// Run the same startup sequence for native GPU captures without a window surface.
+    pub fn boot_offscreen() -> (Self, Task<Message>) {
+        let (app, task) = Self::boot();
+        app.ensure_gui_startup_for_canvas_size(super::app_icon::initial_window_size());
+        (app, task)
+    }
+
     /// Construct the App struct from initialized components.
     pub(crate) fn build_app(init: AppInit) -> Self {
         let now = std::time::Instant::now();

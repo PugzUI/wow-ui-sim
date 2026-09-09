@@ -24,6 +24,95 @@ if C_Spell ~= nil and type(rawget(C_Spell, "RequestLoadSpellData")) ~= "function
     return true
   end
 end
+
+-- Mists can skip Blizzard_ObjectAPI while WeakAuras still consumes its
+-- nonvisual Spell object. Keep this contract backed by the simulator's
+-- C_Spell surface; a real Blizzard definition wins when present.
+if WOW_PROJECT_ID == WOW_PROJECT_MISTS and rawget(_G, "Spell") == nil then
+  SpellMixin = SpellMixin or {}
+
+  function SpellMixin:SetSpellID(spellID)
+    self.spellID = tonumber(spellID)
+  end
+
+  function SpellMixin:GetSpellID()
+    return self.spellID
+  end
+
+  function SpellMixin:Clear()
+    self.spellID = nil
+  end
+
+  function SpellMixin:IsSpellEmpty()
+    return self.spellID == nil or self.spellID == 0
+  end
+
+  function SpellMixin:IsSpellDataCached()
+    return not self:IsSpellEmpty()
+      and type(C_Spell) == "table"
+      and type(C_Spell.IsSpellDataCached) == "function"
+      and C_Spell.IsSpellDataCached(self.spellID) or false
+  end
+
+  function SpellMixin:GetSpellName()
+    return C_Spell.GetSpellName(self.spellID)
+  end
+
+  function SpellMixin:GetSpellTexture()
+    return C_Spell.GetSpellTexture(self.spellID)
+  end
+
+  function SpellMixin:GetSpellSubtext()
+    if type(C_Spell.GetSpellSubtext) == "function" then
+      return C_Spell.GetSpellSubtext(self.spellID)
+    end
+    return ""
+  end
+
+  function SpellMixin:GetSpellDescription()
+    return C_Spell.GetSpellDescription(self.spellID)
+  end
+
+  local function spellCancelHandle()
+    local cancelled = false
+    local handle = {}
+    local function cancel()
+      if cancelled then
+        return false
+      end
+      cancelled = true
+      return true
+    end
+    setmetatable(handle, { __call = cancel })
+    handle.Cancel = cancel
+    handle.CancelCallback = cancel
+    return handle
+  end
+
+  function SpellMixin:ContinueOnSpellLoad(callback)
+    if type(callback) == "function" then
+      callback(self)
+    end
+  end
+
+  function SpellMixin:ContinueWithCancelOnSpellLoad(callback)
+    local handle = spellCancelHandle()
+    if type(callback) == "function" then
+      callback(self)
+      handle.Cancel = function() return false end
+      handle.CancelCallback = handle.Cancel
+      setmetatable(handle, { __call = handle.Cancel })
+    end
+    return handle
+  end
+
+  Spell = SpellMixin
+  function Spell:CreateFromSpellID(spellID)
+    local spell = CreateFromMixins(SpellMixin)
+    spell:SetSpellID(spellID)
+    return spell
+  end
+end
 "#;
 
 pub(crate) fn apply_bootstrap(lua: &mut rilua::Lua) -> crate::Result<()> {
@@ -109,5 +198,85 @@ mod tests {
 
         assert_eq!(item_result, "item-existing");
         assert_eq!(spell_result, "spell-existing");
+    }
+
+    #[test]
+    fn installs_mists_spell_object_contract() {
+        let env = WowLuaEnv::new().expect("lua env should initialize");
+        env.exec(
+            r#"
+            WOW_PROJECT_MISTS = 19
+            WOW_PROJECT_ID = WOW_PROJECT_MISTS
+            Spell = nil
+            SpellMixin = nil
+            "#,
+        )
+        .expect("fixture should select Mists and clear ObjectAPI globals");
+        {
+            let mut lua = env.lua.borrow_mut();
+            super::apply_bootstrap(&mut lua).expect("ObjectAPI compatibility should apply");
+        }
+
+        let (known_id, known_empty, known_name, known_icon, known_description, empty): (
+            i32,
+            bool,
+            String,
+            i32,
+            String,
+            bool,
+        ) = env
+            .eval(
+                r#"
+                local known = Spell:CreateFromSpellID(116)
+                local _, icon = known:GetSpellTexture()
+                local empty = Spell:CreateFromSpellID(nil)
+                return known:GetSpellID(), known:IsSpellEmpty(), known:GetSpellName(),
+                       icon, known:GetSpellDescription(), empty:IsSpellEmpty()
+                "#,
+            )
+            .expect("Spell object accessors should be callable");
+
+        assert_eq!(known_id, 116);
+        assert!(!known_empty);
+        assert_ne!(known_name, "Unknown");
+        assert!(known_icon > 0);
+        assert!(!known_description.is_empty());
+        assert!(empty);
+    }
+
+    #[test]
+    fn mists_spell_callbacks_are_synchronous_and_cancelled_after_fire() {
+        let env = WowLuaEnv::new().expect("lua env should initialize");
+        env.exec(
+            r#"
+            WOW_PROJECT_MISTS = 19
+            WOW_PROJECT_ID = WOW_PROJECT_MISTS
+            Spell = nil
+            SpellMixin = nil
+            "#,
+        )
+        .expect("fixture should select Mists and clear ObjectAPI globals");
+        {
+            let mut lua = env.lua.borrow_mut();
+            super::apply_bootstrap(&mut lua).expect("ObjectAPI compatibility should apply");
+        }
+
+        let (fired, cancel_call, cancel_method, cancel_alias): (bool, bool, bool, bool) = env
+            .eval(
+                r#"
+                local fired = false
+                local spell = Spell:CreateFromSpellID(116)
+                local cancel = spell:ContinueWithCancelOnSpellLoad(function(object)
+                    fired = object:GetSpellID() == 116
+                end)
+                return fired, cancel(), cancel:Cancel(), cancel:CancelCallback()
+                "#,
+            )
+            .expect("Spell callback and cancellation aliases should be callable");
+
+        assert!(fired);
+        assert!(!cancel_call);
+        assert!(!cancel_method);
+        assert!(!cancel_alias);
     }
 }

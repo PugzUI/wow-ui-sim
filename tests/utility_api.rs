@@ -211,6 +211,102 @@ fn test_tinvert() {
 }
 
 // ============================================================================
+// tCompare
+// ============================================================================
+
+#[test]
+fn test_tcompare_is_shallow_by_default() {
+    let env = env();
+    let result: (bool, bool, bool) = env
+        .eval(
+            r#"
+            local nested = {value = 1}
+            return tCompare({value = 1}, {value = 1}),
+                   tCompare({child = nested}, {child = nested}),
+                   tCompare({child = {value = 1}}, {child = {value = 1}})
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, (true, true, true));
+}
+
+#[test]
+fn test_tcompare_uses_lua_defaults_indexing_and_equality() {
+    let env = env();
+    let result: (bool, bool, bool, bool, bool) = env
+        .eval(
+            r#"
+            local right = setmetatable({}, {__index = {value = 1}})
+            local left = setmetatable({}, {__index = {value = 1}})
+            local shallow_false = tCompare({child = {value = 1}}, {child = {value = 2}}, false)
+            local default_false = tCompare({value = 1}, {value = 1}, false)
+            local lhs_index = tCompare({value = 1}, right)
+            local rhs_index = tCompare(left, {value = 1})
+            local delayed_depth_error = not pcall(tCompare, {child = {value = 1}}, {child = {value = 1}}, "not a number")
+            return shallow_false, default_false, lhs_index, rhs_index, delayed_depth_error
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, (true, true, true, true, true));
+}
+
+#[test]
+fn test_tcompare_uses_lua_sub_for_custom_depth_and_errors_on_non_table_index() {
+    let env = env();
+    let result: (bool, bool, bool) = env
+        .eval(
+            r#"
+            local sub_called = false
+            local depth = setmetatable({}, {
+              __lt = function() return true end,
+              __sub = function(_, value)
+                sub_called = value == 1
+                return 2
+              end,
+            })
+            local custom_depth = tCompare(
+              {child = {value = 1}},
+              {child = {value = 2}},
+              depth
+            )
+            local bad_index = setmetatable({}, {__index = 42})
+            local index_error = not pcall(tCompare, {value = 1}, bad_index)
+            local chained_bad_index = setmetatable({}, {
+              __index = setmetatable({}, {__index = false}),
+            })
+            local chain_error = not pcall(tCompare, {value = 1}, chained_bad_index)
+            return custom_depth, sub_called, index_error and chain_error
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, (false, true, true));
+}
+
+#[test]
+fn test_tcompare_recurses_to_requested_depth_and_rejects_extra_keys() {
+    let env = env();
+    let result: (bool, bool, bool) = env
+        .eval(
+            r#"
+            return tCompare({child = {value = 1}}, {child = {value = 1}}, 2),
+                   tCompare({child = {value = 1}}, {child = {value = 2}}, 2),
+                   tCompare({value = 1}, {value = 1, extra = true})
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, (true, false, false));
+}
+
+#[test]
+fn test_tcompare_preserves_argument_errors() {
+    let env = env();
+    let errored: bool = env
+        .eval("local ok = pcall(tCompare, nil, {}); return not ok")
+        .unwrap();
+    assert!(errored);
+}
+
+// ============================================================================
 // tContains
 // ============================================================================
 

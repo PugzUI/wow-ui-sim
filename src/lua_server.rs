@@ -300,6 +300,7 @@ fn send_command(
     if cmd_tx.send(build(resp_tx)).is_err() {
         return Response::Error("App closed".into());
     }
+    crate::lua_server_contract::COMMAND_READY.notify_one();
     match resp_rx.recv_timeout(std::time::Duration::from_secs(30)) {
         Ok(r) => r,
         Err(_) => Response::Error("Timeout".into()),

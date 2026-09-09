@@ -1,7 +1,9 @@
 //! Color tables — make_rilua_color_table, named color globals, RAID_CLASS_COLORS,
 //! C_ClassColor, and tooltip / item-quality / class-name / icon-list stubs.
 
-use crate::lua_api::globals::strings::string_data::game_enums::ITEM_QUALITY_COLORS_DATA;
+use crate::lua_api::globals::strings::string_data::game_enums::{
+    CLASS_NAMES_DATA, ITEM_QUALITY_COLORS_DATA,
+};
 use crate::lua_api::methods::{
     create_string, create_table, table_get, table_set, table_set_num, val_to_string,
 };
@@ -283,10 +285,14 @@ fn make_item_quality_color_entry(
 }
 
 pub fn register_rilua_class_name_tables(lua: &mut rilua::Lua) -> LuaResult<()> {
-    // TODO: iterate CLASS_NAMES_DATA from string_data
     let state = lua.state_mut();
     let male = create_table(state);
     let female = create_table(state);
+    for &(class_file, name) in CLASS_NAMES_DATA {
+        let localized_name = create_string(state, name);
+        table_set(state, male, class_file, localized_name);
+        table_set(state, female, class_file, localized_name);
+    }
     set_global_val(state, "LOCALIZED_CLASS_NAMES_MALE", male);
     set_global_val(state, "LOCALIZED_CLASS_NAMES_FEMALE", female);
     Ok(())

@@ -63,6 +63,8 @@ mod strata_emit;
 #[cfg(feature = "gui")]
 mod styles;
 #[cfg(feature = "gui")]
+mod texture_gradient;
+#[cfg(feature = "gui")]
 mod tiling;
 #[cfg(feature = "gui")]
 pub mod tooltip;
@@ -135,6 +137,8 @@ fn perf_logging_enabled() -> bool {
 #[cfg(feature = "gui")]
 #[derive(Debug, Clone)]
 pub enum Message {
+    /// A live IPC command is ready, even when simulation timers are idle.
+    IpcReady,
     FireEvent(String),
     Scroll(f32, f32),
     ReloadUI,
@@ -205,11 +209,23 @@ pub fn run_iced_ui(
         app::INIT_EXEC_LUA.with(|cell| *cell.borrow_mut() = Some((code, exec_lua_secure)));
     }
 
-    iced::application(App::boot, App::update, App::view)
-        .title(App::title)
-        .window(app_icon::settings())
-        .subscription(App::subscription)
-        .run()?;
+    if std::env::var("WOW_SIM_OFFSCREEN").is_ok_and(|value| value == "1") {
+        iced::daemon(App::boot_offscreen, App::update, offscreen_view)
+            .subscription(App::subscription)
+            .run()?;
+    } else {
+        iced::application(App::boot, App::update, App::view)
+            .title(App::title)
+            .window(app_icon::settings())
+            .subscription(App::subscription)
+            .run()?;
+    }
 
     Ok(())
+}
+
+/// The daemon shares the application view contract but never opens a window.
+#[cfg(feature = "gui")]
+fn offscreen_view(app: &App, _window: iced::window::Id) -> iced::Element<'_, Message> {
+    app.view()
 }
