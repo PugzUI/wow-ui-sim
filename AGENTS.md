@@ -7,6 +7,7 @@
 - Blizzard UI runtime files live in the profile-scoped cache at `~/.cache/wow-ui-sim/blizzard-ui/<profile>/AddOns`, populated from the committed manifest with `wow-cli casc sync-blizzard-ui`. Do not rely on `Interface/BlizzardUI` or repo-local `vendor/wow-ui-source-*` checkouts for runtime loading.
 - **NEVER modify files in `Interface/BlizzardUI/`** — this legacy symlink tree is no longer the runtime source. Run `./scripts/setup-blizzard-ui.sh` or `./scripts/init-worktree.sh` to sync the active profile cache.
 - **NEVER override, monkey-patch, or otherwise change Blizzard/vendor Lua behavior as a performance optimization.** Blizzard Lua is the compatibility target. For perf work, optimize simulator-side primitive/method/dirty/dispatch costs (`SetAlpha`, `SetFormattedText`, `SetPoint`, `SetFontObject`, etc.) instead. Only patch Blizzard/vendor behavior when matching real WoW semantics/correctness, never as a performance shortcut.
+- **Rust Build & Disk Cache Hygiene (`cargo sweep`)**: Cargo creates new hashed artifacts in `target/` on every feature change or profile switch, accumulating tens of gigabytes of stale artifacts. **Always** use the `cargo sweep` workflow: run `cargo sweep -s` before building and `cargo sweep -f` after building to clean artifacts older than the timestamp, keeping only the latest active build. For workspace-wide cleanup, run `cargo sweep -r --hidden -m 2GB ~/workspace` (the `--hidden` flag is mandatory to include `~/workspace/.worktrees/`).
 
 ## Wiki
 

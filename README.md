@@ -113,6 +113,26 @@ end)
 
 The simulator exposes an `A_Admin` Lua namespace for controlling state in tests (player identity, combat, party, buffs, zone, economy, etc.). See [docs/admin-api/](docs/admin-api/README.md).
 
+## Build & Cache Hygiene (`cargo sweep`)
+
+Because `wow-ui-sim` supports multiple client profiles, feature flags, and binaries, Cargo generates unique hashed artifacts in `target/` on every build configuration. **Always** follow the `cargo sweep` workflow:
+
+```bash
+# 1. Stamp before compiling
+cargo sweep -s
+
+# 2. Build or test
+cargo build --release --features client-mists,gui,casc
+
+# 3. Clean all artifacts older than the stamp (preserves only the active build)
+cargo sweep -f
+```
+
+To clean accumulated stale builds across all projects and worktrees while preserving the latest active builds:
+```bash
+cargo sweep -r --hidden -m 2GB ~/workspace
+```
+
 ## License
 
 GPL-3.0-only
