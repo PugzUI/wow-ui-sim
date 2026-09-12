@@ -5,7 +5,7 @@ use crate::lua_api::frame::methods::{
 };
 use crate::lua_api::methods::{
     borrow_state_mut, extract_frame_id, get_frame_env_for_debug, get_or_create_frame_fields,
-    registry_set, table_set_static, val_to_string,
+    registry_get, registry_set, table_set_static, val_to_string,
 };
 use crate::lua_bridge::{stack_val, table_set_rust_fn_static};
 use rilua::{LuaApiMut, Val};
@@ -33,6 +33,15 @@ pub(crate) fn init_builtin_frames(state: &Rc<RefCell<SimState>>) {
 
 pub(super) fn init_frame_metatable(lua: &mut rilua::Lua) -> crate::Result<()> {
     let state = lua.state_mut();
+    // Idempotent: init_lua_state calls this twice (pre/post sandbox setup).
+    // A second allocation would orphan every metatable/index reference formed
+    // against the first pair — widget clones and ElvUI's Toolkit would then
+    // patch divergent index tables (seen as missing Point/Height/Size on
+    // Slider/Button clones). Reuse the first pair; re-registration below is
+    // idempotent (same keys, same functions).
+    if let Val::Table(_) = registry_get(state, "__rilua_frame_mt") {
+        return Ok(());
+    }
     let frame_mt = Val::Table(state.gc.alloc_table(rilua::vm::table::Table::new()));
     table_set_static(state, frame_mt, "__index", frame_mt);
     registry_set(state, "__rilua_frame_mt", frame_mt);

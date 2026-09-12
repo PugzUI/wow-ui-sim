@@ -57,6 +57,7 @@ const VERBOSE_WARNING_ADDONS: &[&str] = &[
     "MacroToolkit",
     "MinimapButtonButton",
     "OribosExchange",
+    "ElvUI",
 ];
 
 pub(super) fn print_addon_warnings(name: &str, warnings: &[String]) {
@@ -66,10 +67,10 @@ pub(super) fn print_addon_warnings(name: &str, warnings: &[String]) {
     if warnings.is_empty() || !VERBOSE_WARNING_ADDONS.contains(&name) {
         return;
     }
-    for (i, w) in warnings.iter().take(10).enumerate() {
+    for (i, w) in warnings.iter().take(300).enumerate() {
         println!("  [{}] {}", i + 1, w);
     }
-    if warnings.len() > 10 {
-        println!("  ... and {} more", warnings.len() - 10);
+    if warnings.len() > 300 {
+        println!("  ... and {} more", warnings.len() - 300);
     }
 }
